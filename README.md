@@ -8,7 +8,13 @@ Much of the work in this project is about what happens between those everyday ac
 
 **Built with:** React Native · TypeScript · Expo · Kotlin · Rust / OpenMLS · ASP.NET Core · SQLite · MapLibre
 
-[Demo](#demo) · [How it works](#how-it-works) · [Engineering decisions](#engineering-decisions) · [Run locally](#run-locally) · [Tests](#tests) · [Current limitations](#current-limitations)
+[Why I made this](#why-i-made-this) · [Demo](#demo) · [How it works](#how-it-works) · [Engineering decisions](#engineering-decisions) · [Run locally](#run-locally) · [Tests](#tests) · [Current limitations](#current-limitations)
+
+## Why I made this
+
+I made Family Circle because I don't trust WhatsApp and other messaging and location sharing apps with this much of my personal life. Location data in particular feels too personal to hand over to a service I have little control over.
+
+The main reason I'm building it is to use it myself for location sharing. I wanted something I could run on my own server, with code I could inspect and change, and control over who I share my location with and for how long. Having chat in the same app is useful too, but location sharing is what made me want to build it in the first place.
 
 ## Demo
 
