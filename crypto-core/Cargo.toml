@@ -1,0 +1,49 @@
+[package]
+name = "crypto-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "MLS group encryption and encrypted state recovery for Family Circle."
+
+# TODO: add cargo audit / cargo deny to CI.
+# Keep the OpenMLS crates on compatible versions when updating these pins.
+
+# Build a Rust library for tests and a shared library for the Android bridge.
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+openmls = "=0.9.0"
+openmls_rust_crypto = "=0.6.0"
+openmls_basic_credential = "=0.6.0"
+openmls_traits = "=0.6.0"
+tls_codec = "0.5"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
+# Device/event IDs and randomized delivery in acceptance tests.
+rand = "0.8"
+uniffi = { version = "=0.29.5", features = ["cli"] }
+
+# Recovery-key derivation and authenticated backup encryption.
+hkdf = "0.13.0"
+hmac = "0.13.0"
+sha2 = "0.11.0"
+chacha20poly1305 = "0.11.0"
+# Generate recovery phrases and validate their word lists and checksums.
+bip39 = { version = "2.2.2", features = ["rand"] }
+# Match openmls_basic_credential's Ed25519 key representation for from_raw:
+# private = SigningKey::as_bytes(), public = VerifyingKey::to_bytes().
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+# Serialize the identity and MLS state before backup encryption.
+# This format stays inside Rust; FFI calls pass opaque bytes.
+postcard = { version = "1.1.3", features = ["alloc"] }
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22"

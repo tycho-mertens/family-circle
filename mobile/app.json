@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "Family Circle",
+    "slug": "family-circle-dev",
+    "scheme": "familycircledev",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "dev.familycircle.poc"
+    },
+    "android": {
+      "package": "dev.familycircle.poc",
+      "adaptiveIcon": {
+        "backgroundColor": "#FBF3EC",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "allowBackup": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "plugins": [
+      "expo-dev-client",
+      "expo-secure-store",
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Family Circle to scan QR invitations.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": true
+        }
+      ],
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#FBF3EC",
+          "dark": {
+            "backgroundColor": "#211C18"
+          }
+        }
+      ],
+      "@maplibre/maplibre-react-native",
+      "./plugins/with-lan-network-security",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose photos and videos to share in your Circles, or a profile photo.",
+          "cameraPermission": false,
+          "microphonePermission": "Record voice messages for your Circles."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Record voice messages for your Circles.",
+          "enableBackgroundRecording": false,
+          "enableBackgroundPlayback": false
+        }
+      ],
+      "expo-video"
+    ]
+  }
+}

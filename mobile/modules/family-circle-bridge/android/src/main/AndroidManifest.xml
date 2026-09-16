@@ -1,0 +1,37 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- HeadlessJsTaskService.startTask() acquires a wake lock so the device
+       doesn't sleep mid-task — normal-level permission, granted at install
+       automatically, no runtime prompt. -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- Android 13+ requires this to show any notification at all, including
+       SyncForegroundService's own. The app also asks at runtime through
+       FamilyCircleBridgeModule.kt's requestNotificationPermission, which is
+       the user-facing prompt; this entry only declares that it may ask. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+  <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+  <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+  <application>
+    <receiver android:name="expo.modules.familycirclebridge.NotificationRestartReceiver" android:exported="false">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+    <service android:name="expo.modules.familycirclebridge.LocationSharingService" android:exported="false" android:foregroundServiceType="location" android:stopWithTask="false" />
+    <service
+      android:name="expo.modules.familycirclebridge.SyncForegroundService"
+      android:exported="false"
+      android:stopWithTask="false"
+      android:foregroundServiceType="specialUse">
+      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Maintain a direct encrypted messaging relay subscription for incoming Circle messages and location-sharing alerts, with a user-visible connection status and pause control. No third-party push service is used." />
+    </service>
+  </application>
+</manifest>

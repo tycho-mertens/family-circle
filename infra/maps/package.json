@@ -1,0 +1,1 @@
+{"name":"family-circle-maps","private":true,"type":"module","scripts":{"styles":"node generate-styles.mjs"},"dependencies":{"@protomaps/basemaps":"5.7.2"}}

@@ -1,0 +1,7 @@
+# Align Android native libraries for both 16 KB and 4 KB page-size devices.
+# Cargo discovers these workspace settings when build-android.sh runs in crypto-core.
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
