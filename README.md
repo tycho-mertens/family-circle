@@ -16,11 +16,11 @@ These recordings use two Android emulators. All identities and recovery phrases 
 
 | Walkthrough | What happens | Video |
 | --- | --- | --- |
-| Setup | Create an identity, save its recovery phrase, and configure the app. | [Watch · 27 sec](docs/videos/setup.webm) |
-| Circle membership | Create a circle, join it from another device, and leave. | [Watch · 66 sec](docs/videos/create-join-leave-circle.webm) |
-| Location and attachments | Send a video attachment and share locations between two devices. | [Watch · 67 sec](docs/videos/location-sharing-and-video-attachments.webm) |
-| Coming back online | Send while offline, reconnect, and remove a member while their device is disconnected. | [Watch · 44 sec](docs/videos/offline-messaging-and-member-removal.webm) |
-| Recovery | Restore an identity using its recovery phrase. | [Watch · 51 sec](docs/videos/seed-phrase-recovery.webm) |
+| Setup | Create an identity, save its recovery phrase, and configure the app. | [setup.webm](https://github.com/user-attachments/assets/86105c53-fe23-4882-ac08-3acb2aaa7c63) |
+| Circle membership | Create a circle, join it from another device, and leave. | [create-join-leave-circle.webm](https://github.com/user-attachments/assets/1ef97db9-5df0-4bd0-ae6a-c3399e20eac5) |
+| Location and attachments | Send a video attachment and share locations between two devices. | [location-sharing-and-video-attachments.webm](https://github.com/user-attachments/assets/3de2da3b-a64a-4e50-a196-62f381e762c5) |
+| Coming back online | Send while offline, reconnect, and remove a member while their device is disconnected. | [offline-messaging-and-member-removal.webm](https://github.com/user-attachments/assets/3469b540-4288-4a37-bfad-11cd544e913e) |
+| Recovery | Restore an identity using its recovery phrase. | [seed-phrase-recovery.webm](https://github.com/user-attachments/assets/faa412ab-2870-4896-97b2-b253a390a57d) |
 
 ## What you can do
 
