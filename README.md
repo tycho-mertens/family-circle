@@ -12,9 +12,9 @@ Much of the work in this project is about what happens between those everyday ac
 
 ## Why I made this
 
-I made Family Circle because I don't trust WhatsApp and other messaging and location sharing apps with this much of my personal life. Location data in particular feels too personal to hand over to a service I have little control over.
+I started Family Circle to build a location-sharing app for my own use, with self-hosting and clear control over how location data is shared. I wanted to choose who could see my location and for how long, while running the service on infrastructure I manage.
 
-The main reason I'm building it is to use it myself for location sharing. I wanted something I could run on my own server, with code I could inspect and change, and control over who I share my location with and for how long. Having chat in the same app is useful too, but location sharing is what made me want to build it in the first place.
+The project also gives me the flexibility to inspect and adapt the code as my needs change. Group chat complements location sharing by keeping everyday communication in the same app.
 
 ## Demo
 
@@ -206,6 +206,8 @@ cd android
 The [HTTP scaling test](crypto-core/tests/relay_scaling.rs) is opt-in and needs an isolated relay; its source includes the invocation. There is currently no CI workflow or separate TypeScript behavior test suite.
 
 ## Current limitations
+
+**Code quality:** Development so far has prioritized getting the app working end to end. Some parts of the code need cleanup and better organization; refactoring is the next step to improve readability and maintainability.
 
 - **Android only.** iOS and web do not have the native bridge needed to run the app.
 - **QR scanning needs a permission fix.** The image-picker configuration currently blocks camera access. Invite codes work without the camera.
