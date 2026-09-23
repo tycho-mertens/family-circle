@@ -52,3 +52,17 @@ test("legacy native errors stay compatible without matching unrelated prose", ()
   cyclic.cause = cyclic;
   assert.equal(nativeErrorCode(cyclic), undefined);
 });
+
+test("permanent commit rejection requires an explicit code and is never an MLS echo", () => {
+  for (const code of ["ERR_MLS_UNAUTHORIZED_COMMIT", "ERR_MLS_INVALID_CONTROL"]) {
+    assert.equal(nativeErrorCode({ code, message: "arbitrary details" }), code);
+    assert.equal(nativeErrorCode({ cause: { code } }), code);
+    assert.equal(isExpectedMlsEcho({ code }), false);
+    assert.equal(nativeErrorCode({ code: "ENOSPC", cause: { code } }), undefined);
+  }
+  for (const name of ["UnauthorizedMembershipCommit", "InvalidControl", "Mls"]) {
+    assert.equal(nativeErrorCode({
+      code: "ERR_UNEXPECTED", message: `CryptoCoreException$${name}: details`,
+    }), undefined);
+  }
+});

@@ -72,7 +72,10 @@ export function createChatPersistence(
     outbox: outbox.snapshot(),
   });
 
-  async function stateTransaction<T>(operation: () => Promise<T>): Promise<T> {
+  async function stateTransaction<T>(
+    operation: () => Promise<T>,
+    recover?: (error: unknown) => (() => Promise<T>) | undefined,
+  ): Promise<T> {
     if (!initialized)
       throw new Error("Your identity is still loading. Try again shortly.");
     return journal.transaction(
@@ -107,6 +110,7 @@ export function createChatPersistence(
         },
       },
       operation,
+      recover,
     );
   }
 

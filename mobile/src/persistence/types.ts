@@ -41,6 +41,11 @@ export interface BackedUpCircle {
   awaitingRejoinNonce?: string;
   recoveryRequired?: boolean;
   syncError?: string;
+  rejectedControl?: {
+    sequenceId: number;
+    code: "ERR_MLS_UNAUTHORIZED_COMMIT" | "ERR_MLS_INVALID_CONTROL";
+    count: number;
+  };
   pendingChats?: (
     | string
     | {

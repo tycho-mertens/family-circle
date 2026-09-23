@@ -11,6 +11,7 @@ import { DEVICE_SLOT } from "./circle-constants";
 import { displayMember, type AppPayload, type CircleInfo } from "./circle-types";
 import { type IdentityContextValue } from "./identity";
 import { ref } from "./observable";
+import { RejectedCommit } from "./rejected-commit";
 
 interface Dependencies {
   lastSeenSequenceId: { current: Map<string, number> };
@@ -131,6 +132,8 @@ export function createCircleSync({
         }
       }
     } catch (err) {
+      // Even during rejoin, rejected native processing must be rolled back.
+      if (err instanceof RejectedCommit) throw err;
       if (envelope.kind === "application") throw err;
       // Stale controls are historical replay, classified by the MLS
       // header. A rejoin replaces unusable history with its new Welcome.
@@ -162,9 +165,36 @@ export function createCircleSync({
 
     for (const envelope of envelopes.sort((a, b) => a.sequenceId - b.sequenceId)) {
       try {
-        await backup.stateTransaction(async () => {
-          await applyEnvelope(circleId, envelope);
-        });
+        await backup.stateTransaction(
+          async () => {
+            await applyEnvelope(circleId, envelope);
+          },
+          (error) => {
+            if (envelope.kind !== "commit" || !(error instanceof RejectedCommit))
+              return undefined;
+            // The journal has restored both native and app state and retains
+            // its lock through this fresh transaction. No queued action can
+            // replace the Circle or change its cursor between these steps.
+            return async () => {
+              const restored = getCircle(circleId);
+              if (!restored || restored.mailboxId !== mailboxId)
+                throw new Error("Circle changed during commit rejection");
+              lastSeenSequenceId.current.set(circleId, envelope.sequenceId);
+              patchCircle(circleId, {
+                rejectedControl: {
+                  sequenceId: envelope.sequenceId,
+                  code: error.code,
+                  count: Math.min(
+                    (restored.rejectedControl?.count ?? 0) + 1,
+                    Number.MAX_SAFE_INTEGER,
+                  ),
+                },
+                syncError: undefined,
+              });
+              reportFailure("Rejected membership update", error);
+            };
+          },
+        );
       } catch (err) {
         reportFailure("Incoming Circle update", err);
         await backup.stateTransaction(async () => {

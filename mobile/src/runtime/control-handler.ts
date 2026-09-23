@@ -1,4 +1,5 @@
 import { createRuntimeDiagnostics } from "../diagnostics";
+import { rejectedCommit } from "./rejected-commit";
 import { circleTransition, remainingAdmin } from "./circle-transitions";
 import * as backup from "../backup";
 import { base64ToBytes, bytesToBase64 } from "../base64";
@@ -292,7 +293,11 @@ export function createControlHandler({
     const { circleId, mailboxId } = current;
 
     if (current.role === "member") {
-      await bridge.processCommit(DEVICE_SLOT, circleId, envelope.ciphertext);
+      try {
+        await bridge.processCommit(DEVICE_SLOT, circleId, envelope.ciphertext);
+      } catch (error) {
+        throw rejectedCommit(error) ?? error;
+      }
       if (!awaitingRejoinWelcome.current.has(circleId))
         patchCircle(
           circleId,

@@ -11,6 +11,8 @@ class BridgeErrorsTest {
       CryptoCoreException.AlreadyProcessed("duplicate") to "ERR_MLS_ALREADY_PROCESSED",
       CryptoCoreException.OwnMessage("echo") to "ERR_MLS_OWN_MESSAGE",
       CryptoCoreException.StaleEpoch("old") to "ERR_MLS_STALE_EPOCH",
+      CryptoCoreException.UnauthorizedMembershipCommit("private details") to "ERR_MLS_UNAUTHORIZED_COMMIT",
+      CryptoCoreException.InvalidControl("private details") to "ERR_MLS_INVALID_CONTROL",
     )
     for ((failure, expectedCode) in cases) {
       val caught = assertThrows(CodedException::class.java) {
@@ -18,6 +20,7 @@ class BridgeErrorsTest {
       }
       assertEquals(expectedCode, caught.code)
       assertSame(failure, caught.cause)
+      assertFalse(caught.message.orEmpty().contains("private details"))
     }
   }
 
@@ -27,6 +30,10 @@ class BridgeErrorsTest {
       withCryptoErrors { throw failure }
     }
     assertSame(failure, caught)
+    val mls = CryptoCoreException.Mls("storage or future epoch")
+    assertSame(mls, assertThrows(CryptoCoreException.Mls::class.java) {
+      withCryptoErrors { throw mls }
+    })
     assertEquals(42, withCryptoErrors { 42 })
     assertEquals("ERR_CIRCLE_SYNC_BUSY", CircleSyncBusyException().code)
   }

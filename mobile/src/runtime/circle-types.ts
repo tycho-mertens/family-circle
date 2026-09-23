@@ -66,6 +66,7 @@ export interface CircleInfo {
   circleName?: string;
   recoveryRequired?: boolean;
   syncError?: string;
+  rejectedControl?: backup.BackedUpCircle["rejectedControl"];
   pendingSends?: number;
   pendingChats?: backup.BackedUpCircle["pendingChats"];
   pendingBroadcasts?: string[];

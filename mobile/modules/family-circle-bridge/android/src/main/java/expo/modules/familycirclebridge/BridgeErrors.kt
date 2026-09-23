@@ -18,6 +18,8 @@ internal fun <T> withCryptoErrors(operation: () -> T): T =
       is CryptoCoreException.AlreadyProcessed -> "ERR_MLS_ALREADY_PROCESSED"
       is CryptoCoreException.OwnMessage -> "ERR_MLS_OWN_MESSAGE"
       is CryptoCoreException.StaleEpoch -> "ERR_MLS_STALE_EPOCH"
+      is CryptoCoreException.UnauthorizedMembershipCommit -> "ERR_MLS_UNAUTHORIZED_COMMIT"
+      is CryptoCoreException.InvalidControl -> "ERR_MLS_INVALID_CONTROL"
       else -> throw error
     }
     throw CodedException(code, "MLS operation could not be applied", error)

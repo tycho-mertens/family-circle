@@ -3,6 +3,8 @@ export const nativeErrorCodes = [
   "ERR_MLS_ALREADY_PROCESSED",
   "ERR_MLS_OWN_MESSAGE",
   "ERR_MLS_STALE_EPOCH",
+  "ERR_MLS_UNAUTHORIZED_COMMIT",
+  "ERR_MLS_INVALID_CONTROL",
 ] as const;
 
 export type NativeErrorCode = (typeof nativeErrorCodes)[number];

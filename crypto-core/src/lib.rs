@@ -206,6 +206,8 @@ pub enum CryptoCoreError {
     OwnMessage,
     #[error("expected a different message type than what was received")]
     UnexpectedMessageType,
+    #[error("membership commit rejected: malformed or non-commit MLS input")]
+    InvalidControl,
     #[error("membership commit rejected: authenticated committer {committer} is not the Circle administrator {administrator}")]
     UnauthorizedMembershipCommit {
         committer: String,
@@ -666,10 +668,19 @@ impl CryptoCore {
             return Ok(());
         }
 
-        let message_in: MlsMessageIn = deserialize_tls(commit)?;
+        // Only classify malformed input in the supported wire format. A newer
+        // version may require an application update, not dropping a real commit.
+        let mut input = commit;
+        let version = ProtocolVersion::tls_deserialize(&mut input)
+            .map_err(|_| CryptoCoreError::InvalidControl)?;
+        if version != ProtocolVersion::Mls10 {
+            return Err(mls_err("Unsupported membership protocol version"));
+        }
+        let message_in = MlsMessageIn::tls_deserialize_exact(commit)
+            .map_err(|_| CryptoCoreError::InvalidControl)?;
         let protocol_message = message_in
             .try_into_protocol_message()
-            .map_err(|_| CryptoCoreError::UnexpectedMessageType)?;
+            .map_err(|_| CryptoCoreError::InvalidControl)?;
 
         let message_epoch = protocol_message.epoch().as_u64();
         let current_epoch = group.epoch().as_u64();
@@ -686,6 +697,13 @@ impl CryptoCore {
             return Err(mls_err(
                 "A competing membership update arrived while local publication is pending",
             ));
+        }
+
+        if message_epoch > current_epoch {
+            return Err(mls_err("Membership update requires a future epoch"));
+        }
+        if protocol_message.content_type() != ContentType::Commit {
+            return Err(CryptoCoreError::InvalidControl);
         }
 
         let processed = group
@@ -711,7 +729,7 @@ impl CryptoCore {
                     .merge_staged_commit(&self.provider, *staged_commit)
                     .map_err(mls_err)?;
             }
-            _ => return Err(CryptoCoreError::UnexpectedMessageType),
+            _ => return Err(CryptoCoreError::InvalidControl),
         }
         let new_epoch = group.epoch().as_u64();
 

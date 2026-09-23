@@ -24,12 +24,18 @@ export class StateJournal {
       rollback: (snapshot: S) => Promise<void>;
     },
     operation: () => Promise<T>,
+    recover?: (error: unknown) => (() => Promise<T>) | undefined,
   ): Promise<T> {
-    return this.run(async () => {
+    const execute = async (
+      operation: () => Promise<T>,
+      recovery?: typeof recover,
+    ): Promise<T> => {
       const before = adapter.snapshot();
       await adapter.begin();
+      let applied = false;
       try {
         const result = await operation();
+        applied = true;
         await adapter.commit();
         return result;
       } catch (error) {
@@ -37,9 +43,16 @@ export class StateJournal {
           await adapter.rollback(before);
         } catch (rollbackError) {
           this.failure = rollbackError;
+          throw error;
         }
+        // Recovery gets a fresh native transaction only after full rollback.
+        // Keep the journal locked, never recover a failed save, and do not
+        // recursively recover if the recovery transaction itself fails.
+        const next = applied ? undefined : recovery?.(error);
+        if (next) return execute(next);
         throw error;
       }
-    });
+    };
+    return this.run(() => execute(operation, recover));
   }
 }

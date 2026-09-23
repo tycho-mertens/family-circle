@@ -49,6 +49,7 @@ export function createCircleCheckpoints({ getCircles, replaceCircles }: Dependen
       joinRequestedAt: circle.joinRequestedAt,
       recoveryRequired: circle.recoveryRequired,
       syncError: circle.syncError,
+      rejectedControl: circle.rejectedControl,
       ownEventIds: [...bucket(myOwnEventIds.current, circle.circleId)],
       processedKeyPackageIds: [
         ...bucket(processedKeyPackageIds.current, circle.circleId),
