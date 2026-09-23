@@ -19,14 +19,6 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
         _client = factory.CreateClient();
     }
 
-    private async Task<string> RegisterMailboxAsync()
-    {
-        var response = await _client.PostAsync("/v1/devices", content: null);
-        response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadFromJsonAsync<RegisterMailboxResponse>();
-        return body!.MailboxId;
-    }
-
     [Fact]
     public async Task Healthz_returns_ok()
     {
@@ -37,7 +29,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Upload_then_fetch_returns_byte_for_byte_ciphertext()
     {
-        var mailboxId = await RegisterMailboxAsync();
+        var mailboxId = await _client.RegisterMailboxAsync();
 
         // Arbitrary binary payload, not valid UTF-8 or JSON, to confirm the
         // relay treats it as opaque bytes, never attempts to parse it as
@@ -63,7 +55,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Duplicate_event_id_upload_is_idempotent()
     {
-        var mailboxId = await RegisterMailboxAsync();
+        var mailboxId = await _client.RegisterMailboxAsync();
         var request = new UploadEnvelopeRequest("dup-event", 1, "application", [9, 9], [1, 2, 3], null);
 
         var first = await _client.PostAsJsonAsync($"/v1/mailboxes/{mailboxId}/events", request);
@@ -80,7 +72,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Cursor_read_only_returns_events_after_the_given_sequence()
     {
-        var mailboxId = await RegisterMailboxAsync();
+        var mailboxId = await _client.RegisterMailboxAsync();
         await _client.PostAsJsonAsync($"/v1/mailboxes/{mailboxId}/events",
             new UploadEnvelopeRequest("e1", 1, "application", [1], [1], null));
         await _client.PostAsJsonAsync($"/v1/mailboxes/{mailboxId}/events",
@@ -99,7 +91,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Ack_is_durable_and_does_not_delete_events()
     {
-        var mailboxId = await RegisterMailboxAsync();
+        var mailboxId = await _client.RegisterMailboxAsync();
         var upload = await _client.PostAsJsonAsync($"/v1/mailboxes/{mailboxId}/events",
             new UploadEnvelopeRequest("e1", 1, "application", [1], [1], null));
         var uploaded = await upload.Content.ReadFromJsonAsync<EnvelopeResponse>();
@@ -123,7 +115,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
         // (keypackage/welcome/commit; see mobile/src/relay.ts) sharing
         // the same mailbox. The relay must never branch on its value, but
         // it must store and return it faithfully.
-        var mailboxId = await RegisterMailboxAsync();
+        var mailboxId = await _client.RegisterMailboxAsync();
 
         var missingKind = await _client.PostAsJsonAsync($"/v1/mailboxes/{mailboxId}/events",
             new { eventId = "e1", epoch = 0, nonce = new byte[] { 1 }, ciphertext = new byte[] { 1 } });
@@ -148,7 +140,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Envelope_metadata_has_explicit_storage_bounds()
     {
-        var mailboxId = await RegisterMailboxAsync();
+        var mailboxId = await _client.RegisterMailboxAsync();
         var path = $"/v1/mailboxes/{mailboxId}/events";
         var valid = new UploadEnvelopeRequest(new string('e', 512), 1, "application", new byte[64], [1], null);
         Assert.Equal(HttpStatusCode.Created, (await _client.PostAsJsonAsync(path, valid)).StatusCode);
@@ -163,7 +155,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Conditional_upload_rejects_a_message_prepared_before_a_new_commit()
     {
-        var mailbox = await RegisterMailboxAsync();
+        var mailbox = await _client.RegisterMailboxAsync();
         var path = $"/v1/mailboxes/{mailbox}/events";
         var commit = await _client.PostAsJsonAsync(path, new UploadEnvelopeRequest("commit", 0, "commit", [1], [2], null));
         var stored = await commit.Content.ReadFromJsonAsync<EnvelopeResponse>();
@@ -181,7 +173,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Idempotency_precedes_cursor_check_after_a_lost_response()
     {
-        var mailbox = await RegisterMailboxAsync();
+        var mailbox = await _client.RegisterMailboxAsync();
         var path = $"/v1/mailboxes/{mailbox}/events";
         var request = new UploadEnvelopeRequest("chat", 1, "application", [1], [3], null, ExpectedSequenceId: 0);
         var first = await _client.PostAsJsonAsync(path, request);
@@ -196,7 +188,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Concurrent_conditional_appends_have_exactly_one_winner()
     {
-        var mailbox = await RegisterMailboxAsync();
+        var mailbox = await _client.RegisterMailboxAsync();
         var path = $"/v1/mailboxes/{mailbox}/events";
         var responses = await Task.WhenAll(Enumerable.Range(0, 12).Select(index => _client.PostAsJsonAsync(path,
             new UploadEnvelopeRequest($"chat-{index}", 1, "application", [1], [3], null, ExpectedSequenceId: 0))));
@@ -208,7 +200,7 @@ public class RelayEndpointsTests : IClassFixture<RelayApiFactory>
     [Fact]
     public async Task Membership_admission_allows_simultaneous_chat_but_rejects_stale_epoch()
     {
-        var mailbox = await RegisterMailboxAsync();
+        var mailbox = await _client.RegisterMailboxAsync();
         var path = $"/v1/mailboxes/{mailbox}/events";
         var request = new UploadEnvelopeRequest("first", 1, "application", [1], [3], null, 0, "membership-v1");
         var responses = await Task.WhenAll(Enumerable.Range(0, 50).Select(i => _client.PostAsJsonAsync(path, request with { EventId = $"chat-{i}" })));

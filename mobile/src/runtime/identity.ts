@@ -3,8 +3,8 @@ import { RuntimeChanges, ref } from "./observable";
 import * as backup from "../backup";
 
 const DEVICE_SLOT = "device";
-// Display limit only; nicknames are not authenticated identifiers.
-export const MAX_NICKNAME_LEN = 40;
+import { MAX_NICKNAME_LEN } from "./identity-constants";
+export { MAX_NICKNAME_LEN } from "./identity-constants";
 
 export interface IdentityContextValue {
   resuming: boolean;
@@ -12,7 +12,9 @@ export interface IdentityContextValue {
   deviceIdRef: { current: string | null };
   nicknames: Record<string, string>;
   nicknamesRef: { current: Record<string, string> };
-  updateNicknames: (updater: (prev: Record<string, string>) => Record<string, string>) => void;
+  updateNicknames: (
+    updater: (prev: Record<string, string>) => Record<string, string>,
+  ) => void;
 
   profilePhotos: Record<string, string | null>;
   profilePhotosRef: { current: Record<string, string | null> };
@@ -97,7 +99,9 @@ function createIdentityRuntime() {
     changes.emit();
   };
   const nicknamesRef = ref<Record<string, string>>({});
-  const updateNicknames = (updater: (prev: Record<string, string>) => Record<string, string>) => {
+  const updateNicknames = (
+    updater: (prev: Record<string, string>) => Record<string, string>,
+  ) => {
     const next = updater(nicknamesRef.current);
     nicknamesRef.current = next;
     setNicknames(next);

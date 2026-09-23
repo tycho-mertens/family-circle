@@ -1,3 +1,4 @@
+import { nativeErrorCode, isExpectedMlsEcho } from "./native-errors";
 import { relayFetch } from "./relay-access";
 import Native from "../modules/family-circle-bridge";
 import * as relay from "./relay";
@@ -52,12 +53,12 @@ let ready = false;
 // Per session: the revision Rust accepted and the fix that came with it.
 // Sending the revision back lets the relay answer "unchanged" instead of a
 // whole snapshot, but only while our copy of the fix still matches Rust's.
-// A generation reroll invalidates every session, so both are cleared with it.
+// Clear both caches when the relay generation changes.
 const verifiedRevisions = new Map<string, number>();
 const verifiedFixes = new Map<string, string>();
 let verifiedGeneration = "";
 
-/** One JSON call per operation. Rust keeps no clock, so `now` rides along. */
+/** Pass the current time with each JSON command; Rust uses the supplied clock. */
 export async function command<T = unknown>(args: Record<string, unknown>): Promise<T> {
   return JSON.parse(await Native.locationCommand(JSON.stringify({ now: Date.now(), ...args })));
 }
@@ -70,8 +71,8 @@ export async function loadLocations(identity: string) {
       ready = true;
       break;
     } catch (error) {
-      // Location and chat work take turns. Brief and normal, so wait.
-      if (!String(error).includes("Circle sync is busy")) throw error;
+      // Retry once the active Circle transaction releases the shared state.
+      if (nativeErrorCode(error) !== "ERR_CIRCLE_SYNC_BUSY") throw error;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
@@ -97,9 +98,9 @@ export async function receiveLocationControl(
       ? result.senderId
       : null;
   } catch (error) {
-    // Replay, own echo and superseded epoch are ordinary traffic. Anything
-    // else must reach the caller, so the cursor holds and this is retried.
-    if (!/CryptoCoreException\$(AlreadyProcessed|OwnMessage|StaleEpoch):/.test(String(error)))
+    // Ignore duplicates, our own messages, and stale epochs. Other failures
+    // reach the caller so it keeps the cursor in place and retries.
+    if (!isExpectedMlsEcho(error) && nativeErrorCode(error) !== "ERR_MLS_STALE_EPOCH")
       throw error;
     return null;
   }
@@ -168,7 +169,7 @@ export async function synchronizeLocations(): Promise<LocationState> {
     await command({ op: "ackControl", eventId: e.event_id });
     void syncBackupNow("device");
   }
-  // Re-read: the acks above consumed snapshots and dequeued controls.
+  // Reload state after acknowledging the uploaded snapshots and controls.
   state = await command<LocationState>({ op: "status" });
   const accepted = new Set<string>();
   const activePins = new Set(state.pins.map((pin) => pin.sessionId));

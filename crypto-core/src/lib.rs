@@ -46,8 +46,8 @@
 //! MLS lets any member commit, so `CirclePolicy` pins one
 //! `membership_admin_id` and recipients check the authenticated committer
 //! against it before merging. Pre-authority backups deserialize with `None`
-//! and refuse membership changes; there is no trustworthy way to pick an
-//! owner out of an existing roster after the fact.
+//! and cannot author membership changes. Incoming commits are checked against
+//! the administrator only when one is pinned.
 //!
 //! The same struct keeps processed event ids and the latest processed epoch.
 //! OpenMLS gives per-epoch keys but does not track what this app has already
@@ -150,9 +150,8 @@ pub struct EncryptedEnvelope {
     pub ciphertext: Vec<u8>,
 }
 
-/// Result of [`CryptoCore::decrypt_event`]. `sender_device_id` is the
-/// MLS-authenticated sender credential, so it is safe to attribute on: a
-/// forged sender fails signature verification and never reaches this struct.
+/// Result of [`CryptoCore::decrypt_event`]. `sender_device_id` comes from the
+/// MLS-authenticated credential, so callers can attribute the plaintext to it.
 #[derive(Debug, Clone, Serialize, Deserialize, uniffi::Record)]
 pub struct DecryptedEvent {
     pub sender_device_id: String,
@@ -235,9 +234,8 @@ fn mls_err(e: impl std::fmt::Display) -> CryptoCoreError {
 struct CirclePolicy {
     latest_epoch: u64,
     processed_event_ids: HashSet<String>,
-    // Only set for authority-v1 Circles. Pre-v1 backups deserialize with
-    // `None` and cannot make membership changes: there is no trustworthy way
-    // to pick an owner out of an existing roster after the fact.
+    // Older backups default to no administrator. They cannot author membership
+    // changes, and process_commit skips the administrator check for them.
     #[serde(default)]
     membership_admin_id: Option<String>,
 }
@@ -264,12 +262,12 @@ fn invite_request_key(
     mailbox_id: &str,
     kind: &str,
 ) -> Result<[u8; 32]> {
-    // secureNonce() makes exactly 16 random bytes and hex-encodes them. Keep
-    // this strict so a low-entropy string cannot become an invite key just by
-    // being passed in here.
+    // Match secureNonce(): 16 random bytes encoded as hex. This checks the
+    // format; the caller is still responsible for generating a random secret.
     if invite_nonce.len() != 32 || !invite_nonce.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(mls_err("invite nonce must be 32 hexadecimal characters"));
     }
+
     let mut hash = Sha256::new();
     hash.update(INVITE_REQUEST_DOMAIN);
     for value in [
@@ -296,9 +294,9 @@ fn invite_request_aad(circle_id: &str, mailbox_id: &str, kind: &str) -> Vec<u8> 
     .join(&0)
 }
 
-/// Seal pre-membership pairing data for the Circle creator. The relay sees
-/// only AEAD bytes and an opaque event id. Copying a request replays the
-/// original applicant's KeyPackage at most; it cannot substitute another.
+/// Encrypt pairing data using the invite secret and destination context.
+/// A copied request carries the same payload; changing it requires the secret.
+/// Replay checks and KeyPackage validation belong to the caller.
 #[uniffi::export]
 pub fn seal_invite_request(
     invite_nonce: String,
@@ -333,8 +331,8 @@ pub fn seal_invite_request(
     Ok(result)
 }
 
-/// Open a pairing request with the creator's active invite secret. Every
-/// failure looks alike from outside: wrong key, malformed, or stale.
+/// Decrypt a pairing request using the supplied invite secret and context.
+/// The caller checks whether the invite is still active and the request is new.
 #[uniffi::export]
 pub fn open_invite_request(
     invite_nonce: String,
@@ -455,7 +453,7 @@ fn circle_not_found(circle_id: &str) -> CryptoCoreError {
 }
 
 impl CryptoCore {
-    /// A fresh random device identity. The keys never leave this struct.
+    /// Create a random device identity and store its signing keys in the provider.
     pub fn new() -> Result<Self> {
         let device_id = format!("device-{}", uuid_like());
         let provider = OpenMlsRustCrypto::default();
@@ -482,7 +480,7 @@ impl CryptoCore {
         })
     }
 
-    /// Derive a stable device ID and signing keypair from a 32-byte seed.
+    /// Derive a signing keypair from a 32-byte seed and use the supplied device ID.
     /// SignatureKeyPair::from_raw expects private = SigningKey::as_bytes()
     /// and public = VerifyingKey::to_bytes(), matching openmls_basic_credential.
     pub fn new_from_seed(device_id: String, identity_seed: [u8; 32]) -> Result<Self> {
@@ -570,8 +568,8 @@ impl CryptoCore {
     }
 
     /// Return the BasicCredential identity from a signature-validated
-    /// KeyPackage. This is the joining device's MLS identity, not a field
-    /// supplied by the app UI, so it is safe to use for admission policy.
+    /// KeyPackage. The signature binds the claimed identity to the package;
+    /// the caller still decides whether that identity is allowed to join.
     pub fn key_package_identity(&self, bytes: &[u8]) -> Result<String> {
         let key_package = self.parse_key_package(bytes)?;
         let credential: BasicCredential = key_package
@@ -682,10 +680,8 @@ impl CryptoCore {
             });
         }
 
-        // The app has one membership committer. A competing commit must not
-        // silently invalidate our already-checkpointed Commit/Welcome pair.
-        // Fail closed and retain the cursor instead of publishing a Welcome
-        // for a different branch of the group.
+        // Reject competing commits while our saved Commit/Welcome pair is pending.
+        // The caller must keep its cursor here until it resolves the conflict.
         if own_commit.is_some() {
             return Err(mls_err(
                 "A competing membership update arrived while local publication is pending",
@@ -696,11 +692,8 @@ impl CryptoCore {
             .process_message(&self.provider, protocol_message)
             .map_err(mls_err)?;
 
-        // MLS authenticates this credential as the Commit sender. The group
-        // itself permits every member to commit, so enforce the Circle's
-        // stricter single-administrator policy before merging the staged
-        // state. A malicious member can fork only their own modified client;
-        // compliant members never accept that fork or its Welcome.
+        // MLS allows any member to commit. When an administrator is pinned,
+        // check the authenticated sender before merging the staged state.
         if let Some(administrator) = administrator {
             let committer =
                 String::from_utf8_lossy(processed.credential().serialized_content()).into_owned();
@@ -834,6 +827,7 @@ impl CryptoCore {
                     .ok_or_else(|| CryptoCoreError::MemberNotFound(id.clone()))
             })
             .collect::<Result<_>>()?;
+
         // Build only the requested change. Leaving stored proposals out avoids
         // silently including unrelated requests in this publication.
         let bundle = group
@@ -853,6 +847,7 @@ impl CryptoCore {
             .map_err(mls_err)?
             .stage_commit(&self.provider)
             .map_err(mls_err)?;
+
         // Staging preserves the old active epoch. The exact commit bytes become
         // the marker process_commit uses to recognize our own ordered echo.
         let (commit, welcome, _) = bundle.into_messages();
@@ -912,10 +907,9 @@ impl CryptoCore {
         }
     }
 
-    /// Return the Welcome produced by the most recent [`Self::add_member`]
-    /// call on this circle. `member_key_package` is unused: `add_member`
-    /// already had OpenMLS bind that Welcome to that recipient. It stays in
-    /// the signature so a call site reads as add-then-welcome-for-X.
+    /// Take the Welcome from the most recent [`Self::add_member`] call on this
+    /// circle. It can be retrieved once. `member_key_package` is unused; the
+    /// preceding add determines the recipient.
     pub fn create_welcome(
         &mut self,
         circle_id: &str,
@@ -931,9 +925,9 @@ impl CryptoCore {
         self.join_from_welcome_with_admin(welcome, None)
     }
 
-    /// Join an authority-v1 Circle. The administrator ID is carried in the
-    /// out-of-band invite and must already be a credential in the Welcome's
-    /// authenticated roster. It is therefore not a relay-controlled label.
+    /// Join a Circle and optionally pin its administrator. The caller supplies
+    /// the ID from a trusted invite; this method checks that it is in the roster.
+    /// Passing None leaves the Circle without a pinned administrator.
     pub fn join_from_welcome_with_admin(
         &mut self,
         welcome: &[u8],
@@ -1123,11 +1117,12 @@ impl CryptoCore {
 
     /// Encrypt an application payload for the current epoch of `circle_id`.
     pub fn encrypt_event(&mut self, circle_id: &str, payload: &[u8]) -> Result<EncryptedEnvelope> {
+        // Wait for the staged commit's relay position to settle before sending
+        // messages in the next epoch.
         if self.circle_publication_state(circle_id)?.pending_commit {
             return Err(mls_err("A membership update is awaiting publication"));
         }
-        // Hold sends while a commit is staged: its eventual relay position decides
-        // which epoch future messages must use. OpenMLS advances the send ratchet below.
+
         let event_id = uuid_like();
         let nonce = self.provider.rand().random_vec(12).map_err(mls_err)?;
 
@@ -1150,9 +1145,9 @@ impl CryptoCore {
         })
     }
 
-    /// Refresh this leaf using the standard MLS Update commit. Used by the
-    /// creator after catching up an old backup, before resuming application
-    /// sends. It establishes a new epoch rather than reusing a saved ratchet.
+    /// Refresh this leaf and merge the MLS Update commit immediately. This
+    /// starts a new epoch with fresh message keys. Ordered publication uses
+    /// a staged update instead.
     pub fn refresh_circle_keys(&mut self, circle_id: &str) -> Result<MlsCommit> {
         self.require_membership_admin(circle_id)?;
         let group = self
@@ -1193,10 +1188,9 @@ impl CryptoCore {
         if policy.processed_event_ids.contains(&envelope.event_id) {
             return Err(CryptoCoreError::AlreadyProcessed(envelope.event_id.clone()));
         }
-        // Stale epoch. OpenMLS usually cannot decrypt an old epoch anyway,
-        // since it erases those secrets on commit, but checking here makes the
-        // policy explicit and produces a better error than a generic
-        // decryption failure.
+
+        // Reject envelopes from older epochs before asking OpenMLS to decrypt.
+        // This gives the caller a specific stale-epoch error.
         if envelope.epoch < policy.latest_epoch {
             return Err(CryptoCoreError::StaleEpoch {
                 message_epoch: envelope.epoch,
@@ -1285,7 +1279,7 @@ impl CryptoCore {
         let signature_keys: SignatureKeyPair = postcard::from_bytes(&payload.signature_keys)
             .map_err(|_| CryptoCoreError::BackupDecryptFailed)?;
 
-        // Rehydrate the provider first: each MlsGroup::load below resolves its
+        // Restore the provider first: each MlsGroup::load below resolves its
         // keys and pending protocol state from this restored storage.
         let provider = OpenMlsRustCrypto::default();
         {
@@ -1387,8 +1381,8 @@ pub fn generate_seed_phrase() -> std::result::Result<String, CryptoCoreError> {
 /// Derive a phrase's relay credentials without creating or touching a local
 /// identity. Used to tell register from restore (does a backup for this
 /// `backup_id` already exist?) and as the first step of a restore;
-/// [`import_encrypted_state`] does the rest. A mistyped word fails the BIP39
-/// checksum here, before any network call.
+/// [`import_encrypted_state`] does the rest. Invalid words and checksum failures
+/// are rejected here; a different valid phrase derives different credentials.
 #[uniffi::export]
 pub fn derive_backup_credentials_from_seed_phrase(
     phrase: String,

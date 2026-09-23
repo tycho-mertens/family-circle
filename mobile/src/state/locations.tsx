@@ -1,3 +1,4 @@
+import { nativeErrorCode } from "../native-errors";
 import { circlesRuntime } from "../runtime/circles";
 import { locationChanges } from "../runtime/location-events";
 import {
@@ -89,7 +90,7 @@ export function LocationProvider({ children }: PropsWithChildren) {
       } catch (e) {
         // Status reads can overlap a short atomic Circle transaction.
         // Keep the last state and retry on the next event/tick.
-        if (mounted && !String(e).includes("Circle sync is busy")) {
+        if (mounted && nativeErrorCode(e) !== "ERR_CIRCLE_SYNC_BUSY") {
           loadError = true;
           setError("Location sharing could not load on this phone.");
         }
@@ -100,9 +101,8 @@ export function LocationProvider({ children }: PropsWithChildren) {
     const unsubscribe = locationChanges.subscribe(() => {
       void refresh();
     });
-    // Native foreground services outlive the React tree and can stop or
-    // resume without a JS event. While the UI is visible, reconcile that
-    // authoritative state so "You're sharing" can never remain stale.
+    // Native services can stop or resume without a JS event. Check their
+    // state while the app is visible to keep the sharing status up to date.
     const timer = setInterval(() => {
       if (AppState.currentState === "active") void refresh();
     }, 5000);

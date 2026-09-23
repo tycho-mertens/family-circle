@@ -1,4 +1,4 @@
-/** Shared triggers coalesce into one follow-up pass; no unbounded work queue. */
+/** Requests received during a sync share its promise and schedule one follow-up pass. */
 export class SyncCoordinator {
   private running: Promise<void> | null = null;
   private again = false;

@@ -78,6 +78,7 @@ fn three_members() -> (Three, EncryptedEnvelope) {
 
     let carol_kp = carol.create_key_package().unwrap();
     let add = alice.add_member(&circle, &carol_kp).unwrap();
+
     // Bob did not author this commit, so he has to process it to reach the
     // new epoch.
     bob.process_commit(&circle, &add.commit_bytes).unwrap();
@@ -100,6 +101,7 @@ fn three_members() -> (Three, EncryptedEnvelope) {
 #[test]
 fn new_member_cannot_read_anything_sent_before_they_joined() {
     let (mut c, before_carol) = three_members();
+
     // Carol's tracked epoch is the one she joined at, which is already ahead
     // of this envelope.
     assert!(matches!(
@@ -122,6 +124,7 @@ fn removed_member_cannot_read_later_events_while_the_rest_still_can() {
     let (mut c, _) = three_members();
     c.remove_bob();
     let after = c.alice.encrypt_event(&c.circle, b"after-removal").unwrap();
+
     // Removal is prospective. Bob keeps whatever he decrypted while he was a
     // member; nothing here can reach into where he put it.
     assert!(c.bob.decrypt_event(&c.circle, &after).is_err());
@@ -141,8 +144,7 @@ fn replayed_envelope_is_rejected_however_the_relay_reorders_it() {
     c.carol.decrypt_event(&c.circle, &after).unwrap();
 
     // adversarial_fetch duplicates and shuffles everything it holds. Carol has
-    // already consumed this event, so every further sighting of it, the
-    // original included, has to be a no-op rather than a second delivery.
+    // already consumed this event, so both copies must return AlreadyProcessed.
     let mut sightings = 0;
     for envelope in relay.adversarial_fetch() {
         if envelope.event_id == after.event_id {
@@ -171,12 +173,11 @@ fn stale_epoch_event_is_rejected_after_the_commit_that_supersedes_it() {
 fn member_can_propose_to_leave_and_another_member_commits_it() {
     let (mut c, _) = three_members();
 
-    // A plain self-removal fails loudly. Pin the rejection that the
-    // propose-then-someone-else-commits flow below exists to work around.
+    // Bob cannot commit his own removal. He asks Alice to commit it below.
     assert!(c.bob.remove_member(&c.circle, &c.bob_id).is_err());
 
     // Every member has to see the proposal, not just the committer: a Commit
-    // references queued proposals by reference, so a member who never saw the
+    // contains references to queued proposals, so a member who never saw the
     // proposal cannot resolve that reference when the Commit arrives.
     let proposal = c.bob.propose_leave(&c.circle).unwrap();
     c.alice.process_proposal(&c.circle, &proposal).unwrap();
@@ -233,8 +234,9 @@ fn backup_export_import_round_trip_and_wrong_seed_phrase_rejected() {
     let keys_again = derive_backup_credentials_from_seed_phrase(phrase.clone()).unwrap();
     assert_eq!(keys.auth_key, keys_again.auth_key);
     assert_eq!(keys.enc_key, keys_again.enc_key);
-    // Independent subkeys. The relay is given auth_key, so these sharing
-    // bytes would hand it the backup encryption key too.
+
+    // Catch accidental reuse of the auth key as the encryption key. Different
+    // bytes alone do not prove that the derived keys are independent.
     assert_ne!(keys.auth_key, keys.enc_key);
 
     let wrong_keys = derive_backup_credentials_from_seed_phrase(wrong_phrase.clone()).unwrap();
@@ -252,7 +254,7 @@ fn backup_export_import_round_trip_and_wrong_seed_phrase_rejected() {
         Err(CryptoCoreError::InvalidSeedPhrase(_))
     ),);
 
-    // Challenge-response proof: the right key verifies, a wrong one does not.
+    // The same key and nonce reproduce the proof; a different key changes it.
     let nonce = b"a-relay-issued-single-use-nonce".to_vec();
     let proof = compute_backup_proof(keys.auth_key.clone(), nonce.clone()).unwrap();
     let proof_recomputed = compute_backup_proof(keys.auth_key.clone(), nonce.clone()).unwrap();
@@ -260,14 +262,14 @@ fn backup_export_import_round_trip_and_wrong_seed_phrase_rejected() {
     let forged_proof = compute_backup_proof(wrong_keys.auth_key.clone(), nonce).unwrap();
     assert_ne!(proof, forged_proof);
 
-    // Export, lose the device, restore from nothing but the backup.
+    // Export, lose the device, then restore with the backup and derived key.
     // app_metadata is opaque to crypto-core, so check it comes back verbatim
     // rather than being quietly dropped.
     let app_metadata = b"{\"mailboxId\":\"abc123\",\"isCreator\":true}".to_vec();
     let exported = bob
         .export_encrypted_state(&keys.enc_key, &app_metadata)
         .unwrap();
-    drop(bob); // the original device is gone, only `exported` + the seed phrase survive
+    drop(bob); // Restore must work without the original CryptoCore instance.
 
     let wrong_key_attempt = CryptoCore::import_encrypted_state(&wrong_keys.enc_key, &exported);
     assert!(matches!(
@@ -287,22 +289,17 @@ fn backup_export_import_round_trip_and_wrong_seed_phrase_rejected() {
     let (mut restored_bob, restored_app_metadata) =
         CryptoCore::import_encrypted_state(&keys.enc_key, &exported).unwrap();
     assert_eq!(restored_bob.identity().device_id, bob_id);
-    // Byte-for-byte, and never examined by this crate.
     assert_eq!(restored_app_metadata, app_metadata);
 
     // AlreadyProcessed confirms that restore preserved the replay record,
     // not just the device ID and group membership.
     let restored_bob_rereads_before_loss = restored_bob.decrypt_event(&circle_id, &before_loss);
-    assert!(
-        matches!(
-            restored_bob_rereads_before_loss,
-            Err(CryptoCoreError::AlreadyProcessed(_))
-        ),
-        "restored state must remember before-loss was already processed, proving it's real \
-         restored state rather than a hollow fresh identity"
-    );
+    assert!(matches!(
+        restored_bob_rereads_before_loss,
+        Err(CryptoCoreError::AlreadyProcessed(_))
+    ));
 
-    // ...and participate normally afterward, in both directions.
+    // The restored member can exchange new messages in both directions.
     let after_restore_from_alice = alice
         .encrypt_event(&circle_id, b"after-restore-from-alice")
         .unwrap();
@@ -336,6 +333,8 @@ fn random_bytes_is_length_bounded_and_actually_random() {
     let zero = random_bytes(0).unwrap();
     assert_eq!(zero.len(), 0);
 
+    // This size check currently uses the crate's generic Mls error variant,
+    // even though no MLS operation is involved.
     let too_big = random_bytes(1_000_000);
     assert!(matches!(too_big, Err(CryptoCoreError::Mls(_))),);
 }

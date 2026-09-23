@@ -197,7 +197,7 @@ export default function CirclesHome() {
                       ? "Waiting for your admin"
                       : circle.role === "removed"
                         ? "No longer a member"
-                        : `${circle.members.length} members${circle.isCreator ? " · Admin" : ""}`}
+                        : `${circle.members.length} members${circle.isAdmin ? " · Admin" : ""}`}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={20} color={colors.textSecondary} />
@@ -214,7 +214,7 @@ export default function CirclesHome() {
                 disabled={!!deleting}
                 onPress={() => {
                   if (
-                    (circle.isCreator && circle.members.length > 1) ||
+                    (circle.isAdmin && circle.members.length > 1) ||
                     (circle.handover && !circle.handover.confirmed)
                   ) {
                     router.push({
@@ -230,7 +230,7 @@ export default function CirclesHome() {
                     circle.role === "joining"
                       ? "Stop waiting for this invitation and remove the pending request from this phone. You can join again with a fresh invite code."
                       : "Leave this Circle, delete its chat history from this phone, and stop sharing your location. Your departure will sync when members reconnect." +
-                          (circle.isCreator && circle.members.length > 1
+                          (circle.isAdmin && circle.members.length > 1
                             ? " The next remaining member will become admin."
                             : circle.members.length <= 1
                               ? " You're the last member, so the Circle will be removed."

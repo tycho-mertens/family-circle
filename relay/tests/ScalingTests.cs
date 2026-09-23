@@ -20,8 +20,7 @@ public sealed class ScalingTests
         using var factory = new RelayApiFactory();
         using var client = factory.CreateClient();
 
-        var registered = await client.PostAsync("/v1/devices", null);
-        var id = (await registered.Content.ReadFromJsonAsync<RegisterMailboxResponse>())!.MailboxId;
+        var id = await client.RegisterMailboxAsync();
         var path = $"/v1/mailboxes/{id}/events";
         await client.PostAsJsonAsync(path, new UploadEnvelopeRequest("commit", 0, "commit", [1], [2], null));
 

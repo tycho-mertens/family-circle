@@ -35,8 +35,7 @@ public class LocationTests : IClassFixture<RelayApiFactory>
     private async Task<(Ed25519PrivateKeyParameters Key, LocationSnapshot Snapshot)> Session()
     {
         var generation = await client.GetFromJsonAsync<JsonElement>("/v1/locations/generation");
-        var registration = await client.PostAsync("/v1/devices", null);
-        var mailbox = (await registration.Content.ReadFromJsonAsync<RegisterMailboxResponse>())!.MailboxId;
+        var mailbox = await client.RegisterMailboxAsync();
 
         var key = new Ed25519PrivateKeyParameters(RandomNumberGenerator.GetBytes(32), 0);
         var publicKey = key.GeneratePublicKey().GetEncoded();

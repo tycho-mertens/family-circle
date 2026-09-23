@@ -3,13 +3,16 @@ import threading
 import unittest
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from unittest.mock import Mock, patch
 
 import prepare
 import serve
 
 
-class Response:
+class FakeUpstreamResponse:
+    """Just enough of urllib's response contract for the tile-cache tests."""
+
     headers = {}
 
     def __enter__(self):
@@ -22,22 +25,30 @@ class Response:
         return b'basemap-tile'
 
 
-def gateway():
-    """A real server on an ephemeral port, using the production handler and
-    connection-capped server class."""
+@contextmanager
+def running_gateway():
+    """Run the production handler on a throwaway port for one test.
+
+    Keeping shutdown here matters: a failed assertion should not leave a server
+    thread behind and make the next test look flaky.
+    """
     server = serve.LimitedThreadingHTTPServer(('127.0.0.1', 0), serve.Server)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    return server, thread
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 class GatewayTests(unittest.TestCase):
     def setUp(self):
-        serve.cache.clear()
-        serve.cache_bytes = 0
-        serve.PROVIDER = 'hosted'
-        serve.KEY = 'test-server-secret'
-        serve.tile_process = None
+        self.enterContext(patch.object(serve, 'cache', serve.TileCache()))
+        self.enterContext(patch.object(serve, 'PROVIDER', 'hosted'))
+        self.enterContext(patch.object(serve, 'KEY', 'test-server-secret'))
+        self.enterContext(patch.object(serve, 'tile_process', None))
 
     def test_rejects_arbitrary_paths_and_invalid_coordinates(self):
         for path in ['/tiles/world/16/0/0.mvt', '/tiles/world/0/1/0.mvt',
@@ -48,15 +59,14 @@ class GatewayTests(unittest.TestCase):
                          (15, 18296, 10766))
 
     def test_key_is_only_in_fixed_upstream_request_and_cache_reuses_tile(self):
-        with patch.object(serve.opener, 'open', return_value=Response()) as upstream:
+        with patch.object(serve.opener, 'open', return_value=FakeUpstreamResponse()) as upstream:
             self.assertEqual(serve.fetch_tile((1, 0, 0)), serve.fetch_tile((1, 0, 0)))
             self.assertEqual(upstream.call_count, 1)
             self.assertEqual(upstream.call_args.args[0].full_url,
                              'https://api.protomaps.com/tiles/v4/1/0/0.mvt?key=test-server-secret')
 
     def test_upstream_error_never_exposes_secret(self):
-        server, thread = gateway()
-        try:
+        with running_gateway() as server:
             with patch.object(serve, 'fetch_tile',
                               side_effect=RuntimeError('https://upstream/?key=test-server-secret')):
                 with self.assertRaises(urllib.error.HTTPError) as caught:
@@ -64,30 +74,21 @@ class GatewayTests(unittest.TestCase):
                 self.assertEqual(caught.exception.code, 502)
                 self.assertEqual(caught.exception.read(), b'Map temporarily unavailable')
                 caught.exception.close()
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
 
 
 class HealthTests(unittest.TestCase):
     def setUp(self):
-        serve.PROVIDER = 'hosted'
-        serve.KEY = 'test-server-secret'
-        serve.tile_process = None
+        self.enterContext(patch.object(serve, 'PROVIDER', 'hosted'))
+        self.enterContext(patch.object(serve, 'KEY', 'test-server-secret'))
+        self.enterContext(patch.object(serve, 'tile_process', None))
 
     def test_healthz_answers_without_going_upstream(self):
-        server, thread = gateway()
-        try:
+        with running_gateway() as server:
             with patch.object(serve, 'fetch_tile', side_effect=AssertionError('upstream fetch')) as upstream:
                 with urllib.request.urlopen(f'http://127.0.0.1:{server.server_port}/healthz') as response:
                     self.assertEqual(response.status, 200)
                     self.assertEqual(response.read(), b'ok')
             upstream.assert_not_called()
-        finally:
-            server.shutdown()
-            server.server_close()
-            thread.join()
 
     def test_hosted_without_a_key_is_not_ready(self):
         serve.KEY = ''
@@ -102,6 +103,18 @@ class HealthTests(unittest.TestCase):
 
 
 class ConnectionCapTests(unittest.TestCase):
+    def test_failed_thread_start_returns_connection_slot(self):
+        with patch.object(serve, 'MAX_CONNECTIONS', 1):
+            server = serve.LimitedThreadingHTTPServer(('127.0.0.1', 0), serve.Server)
+        with server:
+            with patch.object(http.server.ThreadingHTTPServer, 'process_request',
+                              side_effect=RuntimeError('cannot start thread')):
+                with self.assertRaises(RuntimeError):
+                    server.process_request(Mock(), ('127.0.0.1', 1))
+            with patch.object(http.server.ThreadingHTTPServer, 'process_request') as parent:
+                server.process_request(Mock(), ('127.0.0.1', 2))
+                parent.assert_called_once()
+
     def test_connections_past_the_cap_are_closed_and_slots_are_returned(self):
         with patch.object(serve, 'MAX_CONNECTIONS', 1):
             server = serve.LimitedThreadingHTTPServer(('127.0.0.1', 0), serve.Server)

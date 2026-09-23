@@ -1,7 +1,7 @@
 package expo.modules.familycirclebridge
 
-/** One bounded request waits for a usable current runtime, including cold-start
- * initialization and context replacement. The owner supplies its timeout. */
+/** Wait for the current runtime to be ready, including after a cold start or
+ * context replacement. The caller is responsible for timing out and cancelling. */
 internal class RuntimeStartup<T : Any>(
   private val current: () -> T?,
   private val ready: (T) -> Boolean,
@@ -12,7 +12,7 @@ internal class RuntimeStartup<T : Any>(
 ) {
   private var finished = false
   fun begin() {
-    // Register before reading the context to close the initialization race.
+    // Listen first so initialization cannot finish between the check and registration.
     listen { tryStart() }
     tryStart()
     if (!finished) startRuntime()

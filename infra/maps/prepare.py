@@ -8,7 +8,6 @@ alone.
 import argparse
 import hashlib
 import json
-import os
 import pathlib
 import platform
 import shutil
@@ -23,13 +22,12 @@ PMTILES_VERSION = '1.31.2'
 ASSETS_COMMIT = '028c18f713baecad011301ff7a69acc39bcc2ae7'
 ASSETS_SHA256 = 'e942a417d94a12596842a20b53d6b785cbf6d47f2545e458538191ba6d74b305'
 
-# The release tarball and the executable inside it hash differently, so both
-# are pinned per architecture. Add an entry to each map when pinning a new one.
-PMTILES_ARCHIVE_SHA256 = {
-    'x86_64': '3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f',
-}
-PMTILES_BINARY_SHA256 = {
-    'x86_64': 'a7e9ae10184d109c83f456ccdf6df4f3e2a64ba6cf69d9ed0f9f1840305055c1',
+# Pin the release archive and its executable together for each architecture.
+PMTILES_CHECKSUMS = {
+    'x86_64': (
+        '3ed7dbf4ec2e6dfe5e25b6f70d1ffc932729f93c86db353bf514dd71010a312f',
+        'a7e9ae10184d109c83f456ccdf6df4f3e2a64ba6cf69d9ed0f9f1840305055c1',
+    ),
 }
 DEFAULT_DEVELOPMENT_MAP_SHA256 = '7806c66387c4046739302ee23ea408edf5a3a6f2cc428122968c107266cef18b'
 
@@ -46,8 +44,7 @@ def pmtiles_checksums(arch, archive_override=None, binary_override=None):
     one digest cannot satisfy both checks, and accepting it for both would
     silently drop one of them.
     """
-    archive = PMTILES_ARCHIVE_SHA256.get(arch, archive_override)
-    binary = PMTILES_BINARY_SHA256.get(arch, binary_override)
+    archive, binary = PMTILES_CHECKSUMS.get(arch, (archive_override, binary_override))
     if not archive or not binary:
         raise SystemExit(
             f'No pinned go-pmtiles checksums for {arch}. Pass both '
@@ -94,8 +91,8 @@ def download(url, target, expected, label):
 
 
 def fetch_pmtiles_cli(archive_hash, binary_hash, arch):
-    archive = pathlib.Path('.bin/pmtiles.tar.gz')
-    binary = pathlib.Path('.bin/pmtiles')
+    archive = ROOT / '.bin/pmtiles.tar.gz'
+    binary = ROOT / '.bin/pmtiles'
     url = (f'https://github.com/protomaps/go-pmtiles/releases/download/'
            f'v{PMTILES_VERSION}/go-pmtiles_{PMTILES_VERSION}_Linux_{arch}.tar.gz')
     download(url, archive, archive_hash, 'go-pmtiles archive')
@@ -105,9 +102,15 @@ def fetch_pmtiles_cli(archive_hash, binary_hash, arch):
                            if pathlib.PurePosixPath(item.name).name == 'pmtiles' and item.isfile()), None)
             if member is None or member.size > 128 * 1024 * 1024:
                 raise SystemExit('Invalid go-pmtiles archive member.')
-            with bundle.extractfile(member) as source, binary.open('wb') as destination:
-                shutil.copyfileobj(source, destination)
-        binary.chmod(0o755)
+            candidate = binary.with_suffix('.candidate')
+            try:
+                with bundle.extractfile(member) as source, candidate.open('wb') as destination:
+                    shutil.copyfileobj(source, destination)
+                verify(candidate, binary_hash, 'go-pmtiles binary')
+                candidate.chmod(0o755)
+                candidate.replace(binary)
+            finally:
+                candidate.unlink(missing_ok=True)
     verify(binary, binary_hash, 'go-pmtiles binary')
     return binary
 
@@ -119,13 +122,13 @@ def fetch_assets():
     crafted archive cannot write outside public/.
     """
     download(f'https://codeload.github.com/protomaps/basemaps-assets/zip/{ASSETS_COMMIT}',
-             '.bin/assets.zip', ASSETS_SHA256, 'basemap assets')
-    with zipfile.ZipFile('.bin/assets.zip') as bundle:
+             ROOT / '.bin/assets.zip', ASSETS_SHA256, 'basemap assets')
+    with zipfile.ZipFile(ROOT / '.bin/assets.zip') as bundle:
         for member in bundle.infolist():
             parts = pathlib.PurePosixPath(member.filename).parts[1:]
             if not parts or parts[0] not in ('fonts', 'sprites') or '..' in parts or member.is_dir():
                 continue
-            target = pathlib.Path('public').joinpath(*parts)
+            target = (ROOT / 'public').joinpath(*parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
                 # Verify existing public files against the downloaded archive too.
@@ -135,7 +138,7 @@ def fetch_assets():
             else:
                 with bundle.open(member) as source, target.open('wb') as destination:
                     shutil.copyfileobj(source, destination)
-    pathlib.Path('public/assets-version.txt').write_text(ASSETS_COMMIT + '\n')
+    (ROOT / 'public/assets-version.txt').write_text(ASSETS_COMMIT + '\n')
 
 
 def resolve_map_hash(args):
@@ -171,7 +174,7 @@ def reuse_existing_map(world, coverage, args, expected_map_hash):
 
 
 def build_map(world, coverage, args, binary, expected_map_hash):
-    temporary = pathlib.Path('data/world.candidate.pmtiles')
+    temporary = world.with_name('world.candidate.pmtiles')
     temporary.unlink(missing_ok=True)
     try:
         if args.full:
@@ -202,9 +205,8 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
-    os.chdir(ROOT)
     for name in ['.bin', 'data', 'public']:
-        pathlib.Path(name).mkdir(exist_ok=True)
+        (ROOT / name).mkdir(exist_ok=True)
 
     arch = host_architecture()
     archive_hash, binary_hash = pmtiles_checksums(
@@ -218,8 +220,8 @@ def main(argv=None):
         return
 
     expected_map_hash = resolve_map_hash(args)
-    world = pathlib.Path('data/world.pmtiles')
-    coverage = pathlib.Path('public/coverage.json')
+    world = ROOT / 'data/world.pmtiles'
+    coverage = ROOT / 'public/coverage.json'
     if world.exists():
         reuse_existing_map(world, coverage, args, expected_map_hash)
     else:

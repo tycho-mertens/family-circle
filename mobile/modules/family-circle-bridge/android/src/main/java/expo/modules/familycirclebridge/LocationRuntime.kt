@@ -13,7 +13,7 @@ object LocationRuntime {
   private var vault: AtomicFile? = null
   @Volatile var statusMessage: String? = null
   fun load(context: Context, identity: String) = synchronized(ChatRuntime.lock) {
-    check(!ChatRuntime.active) { "Circle sync is busy; try again shortly" }
+    if (ChatRuntime.active) throw CircleSyncBusyException()
     if (loadedIdentity == identity) return@synchronized
     val safe = identity.replace(Regex("[^a-zA-Z0-9_-]"), "")
     val file = AtomicFile(File(context.noBackupFilesDir, "location-$safe.enc"))

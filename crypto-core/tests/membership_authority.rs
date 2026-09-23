@@ -68,9 +68,9 @@ fn bound_admin_changes_and_verified_transfer_recover_authority() {
         .join_from_welcome_with_admin(&authorized.welcome_bytes.unwrap(), Some(owner_id.clone()))
         .unwrap();
 
-    // A completed, MLS-authenticated app-level transfer changes the durable
-    // policy on every member. The successor can then maintain the Circle if
-    // the original owner's devices are lost.
+    // Apply the transfer directly to the owner and successor's local policies.
+    // Check that the owner accepts a later commit from the successor; the
+    // app's authentication and delivery of the transfer are outside this test.
     owner
         .adopt_membership_admin(&circle, &owner_id, &member_id)
         .unwrap();
@@ -91,7 +91,7 @@ fn bound_admin_changes_and_verified_transfer_recover_authority() {
 }
 
 #[test]
-fn legacy_backup_policy_cannot_silently_gain_membership_authority() {
+fn welcome_without_authority_binding_cannot_silently_gain_membership_authority() {
     let mut owner = CryptoCore::new().unwrap();
     let circle = owner.create_circle().unwrap().circle_id;
     // The compatibility welcome intentionally has no authority binding.

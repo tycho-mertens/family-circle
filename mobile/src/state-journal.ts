@@ -1,5 +1,7 @@
-/** One queue for state transactions, including foreground/background callers.
- * A failed commit restores the previous in-memory snapshot before work resumes.
+/**
+ * Serialize foreground and background state transactions in one queue.
+ * Roll back failed operations or commits before continuing. If rollback fails,
+ * reject subsequent work because the saved and in-memory state may disagree.
  */
 export class StateJournal {
   private tail: Promise<unknown> = Promise.resolve();

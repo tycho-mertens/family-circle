@@ -13,6 +13,7 @@
 //! signature and a strictly increasing revision without being able to decrypt
 //! anything, and a stopped or expired session becomes a terminal row that no
 //! later write can revive.
+
 use super::*;
 use chacha20poly1305::aead::Payload;
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
@@ -20,8 +21,9 @@ use rand::{rngs::OsRng, RngCore};
 use serde_json::{json, Value};
 
 const DOMAIN: &str = "family-circle/location/v1";
+
 /// JavaScript's exact-integer ceiling. Revisions cross the FFI boundary as
-/// JSON numbers, so anything above this would not survive the round trip.
+/// JSON numbers; larger integers are not all exactly representable.
 const MAX_REV: u64 = 9_007_199_254_740_991;
 
 /// Use one error for invalid signatures, stale epochs, expired sessions, and
@@ -29,24 +31,27 @@ const MAX_REV: u64 = 9_007_199_254_740_991;
 fn fail() -> CryptoCoreError {
     CryptoCoreError::Mls("Location data is invalid or no longer authorized".into())
 }
+
 /// Generate fixed-size session keys and nonces directly from the OS random source.
 fn random<const N: usize>() -> [u8; N] {
     let mut b = [0; N];
     OsRng.fill_bytes(&mut b);
     b
 }
-/// Fixed-width hex field from the wire, rejecting anything that is not exactly
-/// N bytes. Lengths are part of the format, so a short field is a bad message.
+
+/// Decode a hex field and require exactly N bytes.
 fn decode<const N: usize>(s: &str) -> Result<[u8; N]> {
     hex::decode(s)
         .map_err(|_| fail())?
         .try_into()
         .map_err(|_| fail())
 }
+
 /// Require a JSON string field at the untyped native-command boundary.
 fn str_arg<'a>(v: &'a Value, name: &str) -> Result<&'a str> {
     v[name].as_str().ok_or_else(fail)
 }
+
 /// Require a nonnegative integer; timestamps and revisions must not be fractional.
 fn num(v: &Value, name: &str) -> Result<u64> {
     v[name].as_u64().ok_or_else(fail)
@@ -72,6 +77,7 @@ pub(super) struct Wire {
     pub ciphertext: String,
     pub signature: String,
 }
+
 impl Wire {
     /// Keep this field order identical to the relay's signing format.
     fn header(&self) -> String {
@@ -87,10 +93,12 @@ impl Wire {
             if self.stopped { 1 } else { 0 }
         )
     }
+
     /// Bind both the routing header and encrypted body to the owner's signature.
     fn signed_bytes(&self) -> Vec<u8> {
         format!("{}\n{}\n{}", self.header(), self.nonce, self.ciphertext).into_bytes()
     }
+
     /// Sign with the session owner's private key, which other circle members never receive.
     fn sign(&mut self, key: &[u8; 32]) {
         self.signature = hex::encode(
@@ -99,6 +107,7 @@ impl Wire {
                 .to_bytes(),
         );
     }
+
     /// Verify the session ID's public-key binding, revision bounds, and signature.
     fn verify(&self) -> Result<()> {
         let public = decode::<32>(&self.public_key)?;
@@ -117,6 +126,7 @@ impl Wire {
             .map_err(|_| fail())
     }
 }
+
 /// Session information shared through MLS, including the key for decrypting fixes.
 /// The signing secret is deliberately absent: read access does not grant write access.
 #[derive(Clone, Serialize, Deserialize)]
@@ -131,6 +141,7 @@ struct Descriptor {
     expires_at: u64,
     key: [u8; 32],
 }
+
 /// This device's sharing session, including its private signing key and upload progress.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -144,6 +155,7 @@ struct Own {
     #[serde(default)]
     report_battery: bool,
 }
+
 /// A trusted session descriptor plus the latest accepted position, if one is available.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -153,6 +165,7 @@ struct Received {
     revision: u64,
     fix: Option<Value>,
 }
+
 /// An encrypted descriptor waiting for delivery through the circle's MLS mailbox.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -161,11 +174,12 @@ struct Control {
     mailbox_id: String,
     envelope: EncryptedEnvelope,
 }
+
 /// Local sharing state and outboxes, persisted separately from seed recovery backups.
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct LocationState {
-    /// Highest caller-supplied time. A large backwards jump stops active sessions
-    /// so clock changes cannot extend consent that has already expired.
+    /// Last positive caller-supplied time. A backwards jump of more than a
+    /// minute stops active sessions before the command is processed.
     #[serde(default)]
     last_clock: u64,
     own: HashMap<String, Own>,
@@ -173,6 +187,7 @@ pub(super) struct LocationState {
     pending: HashMap<String, Wire>,
     controls: Vec<Control>,
 }
+
 impl CryptoCore {
     /// Require active membership before accepting or publishing a circle's location data.
     fn location_epoch(&self, circle: &str) -> Result<u64> {
@@ -182,6 +197,7 @@ impl CryptoCore {
         }
         Ok(g.epoch().as_u64())
     }
+
     /// Replace any queued fix with a signed stop and clear this session's local keys.
     /// The stop stays pending until delivery, including when the phone is offline.
     fn stop_location(&mut self, circle: &str) -> Result<()> {
@@ -213,6 +229,7 @@ impl CryptoCore {
         }
         Ok(())
     }
+
     /// Clear the circle's location state while preserving stops that still need uploading.
     pub(super) fn forget_location_circle(&mut self, circle: &str) -> Result<()> {
         self.stop_location(circle)?;
@@ -251,6 +268,7 @@ impl CryptoCore {
         if self.locations.pending.len() > 256 {
             return Err(fail());
         }
+
         let sharing_started = self.locations.own.get(circle).is_none_or(|own| {
             !own.active || (own.descriptor.expires_at != 0 && now >= own.descriptor.expires_at)
         });
@@ -267,6 +285,7 @@ impl CryptoCore {
             expires_at: expires,
             key: random(),
         };
+
         // Keep notification intent in the authenticated control only. Persisted
         // descriptors and existing encrypted location vaults remain compatible.
         let mut payload = serde_json::to_value(&descriptor).map_err(mls_err)?;
@@ -278,6 +297,7 @@ impl CryptoCore {
             mailbox_id: mailbox.into(),
             envelope,
         });
+
         self.locations.own.insert(
             circle.into(),
             Own {
@@ -292,6 +312,7 @@ impl CryptoCore {
         );
         Ok(())
     }
+
     /// JSON command interface: {"op": ...} in, JSON out. Validate fields here
     /// because the FFI signature cannot type-check individual commands.
     ///
@@ -315,6 +336,7 @@ impl CryptoCore {
             }
             self.locations.last_clock = now;
         }
+
         let result = match str_arg(&v, "op")? {
             "start" => {
                 self.start_location(
@@ -339,8 +361,8 @@ impl CryptoCore {
                 own.report_battery = enabled;
                 let session = own.descriptor.session_id.clone();
                 let active = own.active;
-                // Remove already-published battery metadata immediately, even if
-                // offline. This replaces the outbox snapshot without a new fix.
+                // Queue a replacement without battery metadata, using the last fix.
+                // Other devices see the change once the replacement is delivered.
                 if !enabled && active {
                     if let Some(mut fix) = self
                         .locations
@@ -369,6 +391,7 @@ impl CryptoCore {
                 }
                 json!(true)
             }
+
             // Membership or relay-generation changes need fresh session keys. Keep
             // the original expiry so reconciliation cannot extend sharing consent.
             "reconcile" => {
@@ -400,6 +423,7 @@ impl CryptoCore {
                             .report_battery = own.report_battery;
                     }
                 }
+                // Drop descriptors that no longer match the reconciled session state.
                 let valid = self
                     .locations
                     .received
@@ -415,6 +439,7 @@ impl CryptoCore {
                 self.locations.received.retain(|id, _| valid.contains(id));
                 json!(true)
             }
+
             // Seal one latest-value snapshot. Replacing the pending entry coalesces
             // offline fixes rather than building a history of positions to upload.
             "publish" => {
@@ -427,6 +452,7 @@ impl CryptoCore {
                 {
                     return Err(fail());
                 }
+
                 let mut fix = v["fix"].clone();
                 // Battery consent is enforced here, not in the UI: the field is
                 // stripped before it can reach a signed snapshot.
@@ -453,6 +479,7 @@ impl CryptoCore {
                     ciphertext: String::new(),
                     signature: String::new(),
                 };
+
                 let cipher = ChaCha20Poly1305::new(&d.key.into());
                 wire.ciphertext = hex::encode(
                     cipher
@@ -466,6 +493,7 @@ impl CryptoCore {
                         .map_err(|_| fail())?,
                 );
                 wire.sign(&own.signing);
+
                 self.locations.received.insert(
                     d.session_id.clone(),
                     Received {
@@ -478,6 +506,7 @@ impl CryptoCore {
                 self.locations.pending.insert(d.session_id.clone(), wire);
                 json!(true)
             }
+
             // Trust a descriptor only after MLS identifies its sender. A public
             // relay snapshot alone cannot establish who owns a sharing session.
             "control" => {
@@ -510,6 +539,7 @@ impl CryptoCore {
                 );
                 json!({"senderId": sender, "sharingStarted": sharing_started})
             }
+
             // Verify ownership and match the MLS-delivered descriptor before
             // decrypting. Reject older revisions so stale responses cannot rewind a pin.
             "receive" => {
@@ -530,6 +560,8 @@ impl CryptoCore {
                 {
                     return Err(fail());
                 }
+
+                // Re-fetching the same revision is allowed; only older ones are stale.
                 if wire.revision < received.revision {
                     return Err(fail());
                 }
@@ -558,11 +590,13 @@ impl CryptoCore {
                 }
                 json!(true)
             }
+
             // The relay reports the session has ended; discard the descriptor and pin.
             "terminal" => {
                 self.locations.received.remove(str_arg(&v, "sessionId")?);
                 json!(true)
             }
+
             // No snapshot yet: hide the pin but retain the descriptor for a later fix.
             "missing" => {
                 if let Some(r) = self.locations.received.get_mut(str_arg(&v, "sessionId")?) {
@@ -570,6 +604,7 @@ impl CryptoCore {
                 }
                 json!(true)
             }
+
             // An old upload response must not discard a newer queued snapshot.
             // Remove only the revision that the relay has acknowledged.
             "ack" => {
@@ -590,6 +625,7 @@ impl CryptoCore {
                 }
                 json!(true)
             }
+
             // Descriptor delivery is acknowledged separately from snapshot delivery.
             "ackControl" => {
                 let id = str_arg(&v, "eventId")?;
@@ -598,6 +634,7 @@ impl CryptoCore {
                     .retain(|c| c.envelope.event_id != id);
                 json!(true)
             }
+
             // Reading status also enforces expiry; it is not a passive getter.
             "status" => {
                 for (circle, own) in self.locations.own.clone() {
@@ -636,6 +673,7 @@ impl CryptoCore {
                     &serde_json::to_vec(&self.locations).map_err(mls_err)?
                 )?))
             }
+
             // Restore the local vault with this identity's wrapping key. Import
             // itself does not resume uploads; callers reconcile the restored sessions.
             "import" => {
@@ -653,8 +691,9 @@ impl CryptoCore {
         serde_json::to_string(&result).map_err(mls_err)
     }
 }
+
 /// Check coordinate ranges, accuracy, battery percentage, and observation time.
-/// Allow up to a minute of future clock skew; freshness of older fixes is handled elsewhere.
+/// Allow up to a minute of future clock skew. This does not reject old fixes.
 fn validate_fix(fix: &Value, now: u64) -> Result<()> {
     if let Some(battery) = fix.get("batteryPercent") {
         if battery.as_u64().filter(|v| *v <= 100).is_none() {
@@ -679,9 +718,11 @@ fn validate_fix(fix: &Value, now: u64) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn call(core: &mut CryptoCore, v: Value) -> Value {
         serde_json::from_str(&core.location_command(&v.to_string()).unwrap()).unwrap()
     }
+
     fn pair() -> (CryptoCore, CryptoCore, String) {
         let mut a = CryptoCore::new().unwrap();
         let mut b = CryptoCore::new().unwrap();
@@ -692,6 +733,7 @@ mod tests {
         b.join_from_welcome(&welcome).unwrap();
         (a, b, circle)
     }
+
     fn start(a: &mut CryptoCore, b: &mut CryptoCore, circle: &str) -> Value {
         call(
             a,
@@ -708,6 +750,7 @@ mod tests {
         );
         call(a, json!({"op":"status","now":1000000}))["pending"][0].clone()
     }
+
     #[test]
     fn forgetting_circle_erases_sharing_but_preserves_offline_stop() {
         let (mut a, mut b, circle) = pair();
@@ -813,6 +856,8 @@ mod tests {
             call(&mut b, json!({"op":"status","now":1000000}))["pins"][0]["fix"]["latitude"],
             52.23
         );
+
+        // A higher revision is not enough: the signature must cover it too.
         let mut forged = first.clone();
         forged["revision"] = json!(100);
         assert!(b
@@ -831,6 +876,7 @@ mod tests {
         assert!(b
             .location_command(&json!({"op":"receive","snapshot":first,"now":1000100}).to_string())
             .is_err());
+
         let vault = call(&mut a, json!({"op":"export"}));
         assert!(!vault.as_str().unwrap().contains("latitude"));
         call(&mut a, json!({"op":"stop","circleId":circle}));
@@ -844,6 +890,8 @@ mod tests {
             call(&mut b, json!({"op":"status","now":1000200}))["pins"],
             json!([])
         );
+
+        // Seed recovery restores MLS state, but leaves local sharing sessions out.
         let restored = CryptoCore::import_encrypted_state(
             &[7; 32],
             &a.export_encrypted_state(&[7; 32], &[]).unwrap(),
@@ -851,6 +899,7 @@ mod tests {
         .unwrap();
         assert!(restored.0.locations.own.is_empty());
     }
+
     #[test]
     fn battery_consent_is_enforced_and_withdrawal_replaces_snapshot() {
         let (mut a, mut b, circle) = pair();
@@ -916,6 +965,7 @@ mod tests {
             )
             .is_err());
     }
+
     #[test]
     fn receiver_erases_expired_position_without_relay_access() {
         let (mut a, mut b, circle) = pair();
@@ -941,6 +991,7 @@ mod tests {
         call(&mut b, json!({"op":"status","now":1060001}));
         assert!(b.locations.received.is_empty());
     }
+
     #[test]
     fn timed_consent_isolated_circles_and_durable_offline_stop() {
         let (mut a, mut b, circle) = pair();
@@ -984,6 +1035,7 @@ mod tests {
             .all(|s| s["stopped"] == true && s["ciphertext"] == ""));
         assert!(resumed.location_command(&json!({"op":"publish","circleId":circle,"fix":{"latitude":1,"longitude":1,"accuracy":1,"observedAt":1060002},"now":1060002}).to_string()).is_err());
     }
+
     #[test]
     fn membership_change_invalidates_old_snapshots_and_rotates_owner() {
         let (mut a, mut b, circle) = pair();

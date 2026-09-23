@@ -14,20 +14,30 @@ import re
 import subprocess
 import threading
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parent
 
-# .env lives outside public/ and is excluded from the image, so in Docker this
-# loop finds nothing and the values come from compose's env_file instead.
-_env = ROOT / '.env'
-for line in _env.read_text().splitlines() if _env.exists() else []:
-    name, sep, value = line.partition('=')
-    if sep and name in ('MAP_PROVIDER', 'PROTOMAPS_API_KEY', 'PROTOMAPS_ORIGIN',
-                        'MAP_PORT', 'MAP_MAX_CONNECTIONS'):
-        os.environ.setdefault(name, value.strip())
+ENVIRONMENT_NAMES = (
+    'MAP_PROVIDER', 'PROTOMAPS_API_KEY', 'PROTOMAPS_ORIGIN',
+    'MAP_PORT', 'MAP_MAX_CONNECTIONS',
+)
+
+
+def load_environment(path):
+    """Load local settings without overriding the deployment environment."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        name, separator, value = line.partition('=')
+        if separator and name in ENVIRONMENT_NAMES:
+            os.environ.setdefault(name, value.strip())
+
+
+# Docker excludes this file and supplies settings through compose's env_file.
+load_environment(ROOT / '.env')
 
 PROVIDER = os.environ.get('MAP_PROVIDER', 'local')
 KEY = os.environ.get('PROTOMAPS_API_KEY', '')
@@ -39,10 +49,54 @@ MAX_TILE_BYTES = 2 * 1024 * 1024
 CACHE_TTL_SECONDS = 3600
 MAX_CONNECTIONS = max(1, min(int(os.environ.get('MAP_MAX_CONNECTIONS', '128')), 1024))
 
-cache = collections.OrderedDict()
-cache_bytes = 0
-lock = threading.Lock()
-workers = threading.BoundedSemaphore(8)
+UPSTREAM_TIMEOUT_SECONDS = 15
+MAX_UPSTREAM_REQUESTS = 8
+
+
+@dataclass(frozen=True)
+class CachedTile:
+    fetched_at: float
+    data: bytes
+    encoding: str | None
+
+
+class TileCache:
+    """Keep LRU ordering and byte accounting under the same lock."""
+
+    def __init__(self, max_bytes=MAX_CACHE_BYTES, ttl=CACHE_TTL_SECONDS):
+        self.max_bytes = max_bytes
+        self.ttl = ttl
+        self._entries = collections.OrderedDict()
+        self._size = 0
+        self._lock = threading.Lock()
+
+    def _remove(self, coords):
+        tile = self._entries.pop(coords)
+        self._size -= len(tile.data)
+
+    def get(self, coords):
+        with self._lock:
+            tile = self._entries.get(coords)
+            if tile is None:
+                return None
+            if time.monotonic() - tile.fetched_at >= self.ttl:
+                self._remove(coords)
+                return None
+            self._entries.move_to_end(coords)
+            return tile.data, tile.encoding
+
+    def put(self, coords, data, encoding, fetched_at):
+        with self._lock:
+            if coords in self._entries:
+                self._remove(coords)
+            self._entries[coords] = CachedTile(fetched_at, data, encoding)
+            self._size += len(data)
+            while self._size > self.max_bytes:
+                self._remove(next(iter(self._entries)))
+
+
+cache = TileCache()
+workers = threading.BoundedSemaphore(MAX_UPSTREAM_REQUESTS)
 tile_process = None
 
 
@@ -66,42 +120,34 @@ def tile_coordinates(path):
     return z, x, y
 
 
+def tile_request(coords):
+    """Build a request to one of the two fixed tile origins."""
+    z, x, y = coords
+    if PROVIDER == 'hosted':
+        query = urllib.parse.urlencode({'key': KEY})
+        url = f'https://api.protomaps.com/tiles/v4/{z}/{x}/{y}.mvt?{query}'
+        headers = {'Origin': ORIGIN, 'User-Agent': 'FamilyCircleMaps/1.0'}
+    else:
+        url = f'http://127.0.0.1:8091/world/{z}/{x}/{y}.mvt'
+        headers = {}
+    return urllib.request.Request(url, headers=headers)
+
+
 def fetch_tile(coords):
-    """One tile, from the LRU cache when it is still warm."""
-    global cache_bytes
+    """Serve a cached tile or fetch it within the upstream concurrency limit."""
     now = time.monotonic()
-    with lock:
-        cached = cache.get(coords)
-        if cached and now - cached[0] < CACHE_TTL_SECONDS:
-            cache.move_to_end(coords)
-            return cached[1], cached[2]
-    # Bound how many misses go upstream together.
-    if not workers.acquire(timeout=15):
+    cached = cache.get(coords)
+    if cached is not None:
+        return cached
+    if not workers.acquire(timeout=UPSTREAM_TIMEOUT_SECONDS):
         raise RuntimeError('busy')
     try:
-        z, x, y = coords
-        if PROVIDER == 'hosted':
-            query = urllib.parse.urlencode({'key': KEY})
-            url = f'https://api.protomaps.com/tiles/v4/{z}/{x}/{y}.mvt?{query}'
-            headers = {'Origin': ORIGIN, 'User-Agent': 'FamilyCircleMaps/1.0'}
-        else:
-            url = f'http://127.0.0.1:8091/world/{z}/{x}/{y}.mvt'
-            headers = {}
-        request = urllib.request.Request(url, headers=headers)
-        with opener.open(request, timeout=15) as response:
+        with opener.open(tile_request(coords), timeout=UPSTREAM_TIMEOUT_SECONDS) as response:
             data = response.read(MAX_TILE_BYTES + 1)
             if len(data) > MAX_TILE_BYTES:
                 raise RuntimeError('oversized tile')
             encoding = response.headers.get('Content-Encoding')
-        with lock:
-            previous = cache.pop(coords, None)
-            if previous:
-                cache_bytes -= len(previous[1])
-            cache[coords] = (now, data, encoding)
-            cache_bytes += len(data)
-            while cache_bytes > MAX_CACHE_BYTES:
-                _, evicted = cache.popitem(last=False)
-                cache_bytes -= len(evicted[1])
+        cache.put(coords, data, encoding, now)
         return data, encoding
     finally:
         workers.release()
@@ -183,7 +229,11 @@ class LimitedThreadingHTTPServer(http.server.ThreadingHTTPServer):
         if not self.connections.acquire(blocking=False):
             request.close()
             return
-        super().process_request(request, client_address)
+        try:
+            super().process_request(request, client_address)
+        except Exception:
+            self.connections.release()
+            raise
 
     def process_request_thread(self, request, client_address):
         try:
@@ -206,10 +256,10 @@ def main():
     try:
         handler = functools.partial(Server, directory=str(ROOT / 'public'))
         port = int(os.environ.get('MAP_PORT', '8090'))
-        server = LimitedThreadingHTTPServer(('0.0.0.0', port), handler)
-        print(f'Maps gateway listening on {server.server_port} ({PROVIDER})',
-              flush=True)
-        server.serve_forever()
+        with LimitedThreadingHTTPServer(('0.0.0.0', port), handler) as server:
+            print(f'Maps gateway listening on {server.server_port} ({PROVIDER})',
+                  flush=True)
+            server.serve_forever()
     finally:
         if tile_process:
             tile_process.terminate()

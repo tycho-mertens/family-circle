@@ -1,74 +1,43 @@
-import { AttachmentComposer } from "../../../../src/components/AttachmentComposer";
-import { MessageTextDialog } from "../../../../src/components/MessageTextDialog";
-import { VoiceRecorder } from "../../../../src/components/VoiceRecorder";
-import { messageGroupDisplay } from "../../../../src/message-groups";
-import { useEffect, useRef, useState } from "react";
-import { Alert, FlatList, Pressable, Text, View, TextInput } from "react-native";
-import { Stack, router, useLocalSearchParams } from "expo-router";
+import { canWriteMessages } from "../../../../src/runtime/circle-lifecycle";
 import { Ionicons } from "@expo/vector-icons";
-import { useTheme } from "../../../../src/theme";
-import { useCircles, circleLabel, type TimelineItem } from "../../../../src/state/circles";
-import { useIdentity } from "../../../../src/state/identity";
-import { ScreenContainer } from "../../../../src/components/ScreenContainer";
-import { EmptyState } from "../../../../src/components/EmptyState";
-import { TimelineEntryView } from "../../../../src/components/TimelineEntry";
-import { IconButton } from "../../../../src/components/IconButton";
-import { TextField } from "../../../../src/components/TextField";
+import { Stack, router, useLocalSearchParams } from "expo-router";
+import { useEffect, useState } from "react";
+import { Alert, FlatList, Pressable, Text, View } from "react-native";
 import { Button } from "../../../../src/components/Button";
 import { CircleTabs } from "../../../../src/components/CircleTabs";
+import { EmptyState } from "../../../../src/components/EmptyState";
+import { MessageTextDialog } from "../../../../src/components/MessageTextDialog";
 import { Notice } from "../../../../src/components/Notice";
+import { ScreenContainer } from "../../../../src/components/ScreenContainer";
+import { TimelineEntryView } from "../../../../src/components/TimelineEntry";
+import { ChatComposer } from "../../../../src/features/chat/ChatComposer";
+import { useChatNavigation } from "../../../../src/features/chat/useChatNavigation";
+import { messageGroupDisplay } from "../../../../src/message-groups";
+import { circleLabel, useCircles, type TimelineItem } from "../../../../src/state/circles";
+import { useIdentity } from "../../../../src/state/identity";
+import { useTheme } from "../../../../src/theme";
 
 export default function CircleDetail() {
   const { circleId } = useLocalSearchParams<{ circleId: string }>();
-  const {
-    circles,
-    timeline,
-    sendMessage,
-    sendVoiceMessage,
-    sendAttachment,
-    reactToMessage,
-    editMessage,
-    deleteMessage,
-    notice,
-  } = useCircles();
+  const { circles, timeline, reactToMessage, editMessage, deleteMessage, notice } =
+    useCircles();
   const { deviceId, nicknames, profilePhotos } = useIdentity();
   const { colors, spacing, type } = useTheme();
   const [textDialog, setTextDialog] = useState<{ item: TimelineItem; editing: boolean } | null>(
     null,
   );
   const [replyTarget, setReplyTarget] = useState<TimelineItem | null>(null);
-  const [highlighted, setHighlighted] = useState<string | null>(null);
-  const input = useRef<TextInput>(null);
-  const jump = useRef<{ index: number; attempts: number } | null>(null);
-  const jumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (!replyTarget) return;
-    const timer = setTimeout(() => input.current?.focus(), 250);
-    return () => clearTimeout(timer);
-  }, [replyTarget]);
   useEffect(() => {
     setReplyTarget(null);
     setTextDialog(null);
-    setHighlighted(null);
-    jump.current = null;
   }, [circleId]);
-  useEffect(() => {
-    if (!highlighted) return;
-    const timer = setTimeout(() => setHighlighted(null), 2000);
-    return () => clearTimeout(timer);
-  }, [highlighted]);
-  useEffect(
-    () => () => {
-      if (jumpTimer.current) clearTimeout(jumpTimer.current);
-    },
-    [],
+  const entries = timeline.filter(
+    (item) => item.circleId === circleId && item.deletedAt === undefined,
   );
-  const [showAttachments, setShowAttachments] = useState(false);
-  const [showRecorder, setShowRecorder] = useState(false);
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const list = useRef<FlatList<TimelineItem>>(null);
-  const atBottom = useRef(true);
+  const { list, atBottom, highlighted, goToOriginal, listEvents } = useChatNavigation(
+    circleId,
+    entries,
+  );
   const circle = circles[circleId];
   if (!circle)
     return (
@@ -81,12 +50,8 @@ export default function CircleDetail() {
         </EmptyState>
       </ScreenContainer>
     );
-  const entries = timeline.filter(
-    (item) => item.circleId === circleId && item.deletedAt === undefined,
-  );
   const groups = messageGroupDisplay(entries);
-  const canSend =
-    circle.role === "member" && !circle.deleting && !circle.recoveryRequired && !circle.syncError;
+  const canSend = canWriteMessages(circle);
   const memberName = (id?: string) =>
     id === deviceId ? "You" : (nicknames[id ?? ""] ?? "Circle member");
   const originalFor = (item: TimelineItem) =>
@@ -99,29 +64,6 @@ export default function CircleDetail() {
             original.senderId === item.replyTo!.senderId,
         )
       : undefined;
-  const goToOriginal = (target: TimelineItem) => {
-    const index = entries.findIndex((item) => item.id === target.id);
-    if (index < 0) return;
-    atBottom.current = false;
-    jump.current = { index, attempts: 0 };
-    setHighlighted(target.id);
-    list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
-  };
-  const send = async () => {
-    if (busy || !message.trim()) return;
-    const draft = message;
-    const replyingTo = replyTarget;
-    setBusy(true);
-    try {
-      if (await sendMessage(circleId, draft, replyingTo?.id)) {
-        setMessage((current) => (current === draft ? "" : current));
-        setReplyTarget((current) => (current?.id === replyingTo?.id ? null : current));
-        atBottom.current = true;
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <ScreenContainer scroll={false} padded={false}>
       <Stack.Screen
@@ -181,7 +123,7 @@ export default function CircleDetail() {
           <Notice
             text={
               circle.syncError ??
-              (circle.isCreator
+              (circle.isAdmin
                 ? "Refreshing this Circle's connection after restoring saved state. Connect to your server to continue."
                 : "This saved membership needs fresh connection keys. Your admin can refresh the Circle or invite you to rejoin in Circle settings.")
             }
@@ -204,29 +146,7 @@ export default function CircleDetail() {
           flexGrow: 1,
         }}
         keyboardShouldPersistTaps="handled"
-        onScrollBeginDrag={() => {
-          jump.current = null;
-        }}
-        onScrollToIndexFailed={({ index, averageItemLength }) => {
-          if (!jump.current || jump.current.index !== index || jump.current.attempts++ >= 4) return;
-          list.current?.scrollToOffset({
-            offset: Math.max(0, averageItemLength * index),
-            animated: false,
-          });
-          if (jumpTimer.current) clearTimeout(jumpTimer.current);
-          jumpTimer.current = setTimeout(() => {
-            if (jump.current?.index === index)
-              list.current?.scrollToIndex({ index, viewPosition: 0.5, animated: true });
-          }, 180);
-        }}
-        onScroll={(event) => {
-          const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-          atBottom.current = contentSize.height - contentOffset.y - layoutMeasurement.height < 100;
-        }}
-        scrollEventThrottle={100}
-        onContentSizeChange={() => {
-          if (atBottom.current) list.current?.scrollToEnd({ animated: true });
-        }}
+        {...listEvents}
         ListEmptyComponent={
           <EmptyState
             title={
@@ -338,103 +258,23 @@ export default function CircleDetail() {
         }}
       />
       {circle.role === "member" ? (
-        <View
-          style={{
-            paddingHorizontal: spacing.md,
-            paddingTop: spacing.sm,
-            paddingBottom: Math.max(spacing.sm, 10),
-            borderTopWidth: 1,
-            borderColor: colors.border,
-            backgroundColor: colors.surface,
+        <ChatComposer
+          key={circleId}
+          circleId={circleId}
+          canSend={canSend}
+          canRecord={circle.role === "member" && !circle.deleting}
+          replyTarget={replyTarget}
+          setReplyTarget={setReplyTarget}
+          memberName={memberName}
+          onSent={() => {
+            atBottom.current = true;
           }}
-        >
-          {replyTarget && (
-            <View
-              style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 8 }}
-            >
-              <View
-                style={{
-                  flex: 1,
-                  borderLeftWidth: 3,
-                  borderLeftColor: colors.accent,
-                  paddingLeft: 10,
-                  gap: 2,
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={[type.caption, { color: colors.accent, fontWeight: "600" }]}
-                >
-                  Replying to {memberName(replyTarget.senderId)}
-                </Text>
-                <Text numberOfLines={2} style={[type.caption, { color: colors.textSecondary }]}>
-                  {replyTarget.text}
-                </Text>
-              </View>
-              <IconButton
-                plain
-                label="Cancel reply"
-                icon="close"
-                onPress={() => setReplyTarget(null)}
-              />
-            </View>
-          )}
-          <View style={{ flexDirection: "row", alignItems: "flex-end", gap: spacing.sm }}>
-            <IconButton
-              label="Add attachment"
-              icon="add"
-              disabled={busy || !canSend}
-              onPress={() => setShowAttachments(true)}
-            />
-            <View style={{ flex: 1 }}>
-              <TextField
-                inputRef={input}
-                placeholder="Message"
-                accessibilityLabel="Message"
-                value={message}
-                onChangeText={setMessage}
-                multiline
-                maxLength={10000}
-                style={{ maxHeight: 140, borderRadius: 22, borderWidth: 0, paddingHorizontal: 16 }}
-              />
-            </View>
-            {!message.trim() && (
-              <IconButton
-                label="Record voice message"
-                icon="mic-outline"
-                disabled={busy || !canSend}
-                onPress={() => setShowRecorder(true)}
-              />
-            )}
-            <IconButton
-              label="Send message"
-              icon="arrow-up"
-              filled
-              loading={busy}
-              disabled={!message.trim() || !canSend}
-              onPress={send}
-            />
-          </View>
-        </View>
+        />
       ) : circle.role === "removed" ? (
         <View style={{ padding: spacing.lg }}>
           <Notice text="Membership ended. Open Circle settings to request an invitation back." />
         </View>
       ) : null}
-      {showAttachments && canSend && (
-        <AttachmentComposer
-          onClose={() => setShowAttachments(false)}
-          onSend={async (attachment) => {
-            const replyingTo = replyTarget;
-            const sent = await sendAttachment(circleId, attachment, replyingTo?.id);
-            if (sent) {
-              atBottom.current = true;
-              setReplyTarget((current) => (current?.id === replyingTo?.id ? null : current));
-            }
-            return sent;
-          }}
-        />
-      )}
       {textDialog && (
         <MessageTextDialog
           key={textDialog.item.id + String(textDialog.editing)}
@@ -449,21 +289,6 @@ export default function CircleDetail() {
               ? (text) => editMessage(circleId, textDialog.item.id, text)
               : undefined
           }
-        />
-      )}
-      {showRecorder && circle.role === "member" && !circle.deleting && (
-        <VoiceRecorder
-          replyLabel={replyTarget ? memberName(replyTarget.senderId) : undefined}
-          onClose={() => setShowRecorder(false)}
-          onSend={async (voice) => {
-            const replyingTo = replyTarget;
-            const sent = await sendVoiceMessage(circleId, voice, replyingTo?.id);
-            if (sent) {
-              atBottom.current = true;
-              setReplyTarget((current) => (current?.id === replyingTo?.id ? null : current));
-            }
-            return sent;
-          }}
         />
       )}
     </ScreenContainer>

@@ -19,6 +19,7 @@ export function ReplyPreview({
   const foreground = isOwn ? colors.textOnAccent : colors.textPrimary;
   return (
     <Pressable
+      testID="chat-reply-preview"
       accessibilityRole={onPress ? "button" : undefined}
       accessibilityLabel={
         reply.available

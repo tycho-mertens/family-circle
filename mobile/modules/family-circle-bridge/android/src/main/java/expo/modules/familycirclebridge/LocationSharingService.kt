@@ -94,7 +94,7 @@ class LocationSharingService : Service(), LocationListener {
         }
         if (SystemClock.elapsedRealtime() >= nextFixAt && !listening) acquire()
       } catch (error: Exception) {
-        if (error.message?.contains("Circle sync is busy") == true) { android.util.Log.i("CircleLocation", "Sampling deferred while Circle sync commits"); scheduleTick(1_000); return }
+        if (error is CircleSyncBusyException) { android.util.Log.i("CircleLocation", "Sampling deferred while Circle sync commits"); scheduleTick(1_000); return }
         android.util.Log.w("CircleLocation", "Location sampling stopped", error)
         LocationRuntime.statusMessage = "Location sharing is paused. Reopen the app."; stopSelf(); return
       }
@@ -145,7 +145,7 @@ class LocationSharingService : Service(), LocationListener {
       fun stopWhenReady() {
         try { LocationRuntime.stopAll(); tasks.request() }
         catch (error: Exception) {
-          if (error.message?.contains("Circle sync is busy") == true) handler.postDelayed({ stopWhenReady() }, 100)
+          if (error is CircleSyncBusyException) handler.postDelayed({ stopWhenReady() }, 100)
           else { LocationRuntime.statusMessage = "The stop could not be saved. Reopen the app to stop sharing."; stopSelf() }
         }
       }

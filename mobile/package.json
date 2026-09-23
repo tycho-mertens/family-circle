@@ -38,6 +38,7 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "test": "node --experimental-vm-modules --test tests/*.test.mjs",
     "detect-lan-ip": "node scripts/detect-lan-ip.js",
     "prestart": "npm run detect-lan-ip",
     "start": "expo start --dev-client",

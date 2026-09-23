@@ -14,7 +14,8 @@ export {
   type CircleInfo,
   type TimelineItem,
   type Role,
-} from "../runtime/circles";
+} from "../runtime/circle-types";
+
 const CirclesContext = createContext<CirclesContextValue | null>(null);
 export function useCircles() {
   const value = useContext(CirclesContext);
@@ -28,6 +29,8 @@ export function CirclesProvider({ children }: PropsWithChildren) {
     void circlesRuntime.initialize().catch(() => {});
   }, [identity.resuming, identity.pendingCircleSeed]);
   return (
-    <CirclesContext.Provider value={circlesRuntime.getValue()}>{children}</CirclesContext.Provider>
+    <CirclesContext.Provider value={circlesRuntime.getValue()}>
+      {children}
+    </CirclesContext.Provider>
   );
 }

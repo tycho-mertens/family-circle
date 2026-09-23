@@ -6,7 +6,11 @@ export function installationToken() {
 }
 let retryAt = 0;
 export async function relayFetch(url: string, init?: RequestInit) {
-  if (Date.now() < retryAt) throw new Error("Server is busy. Retrying shortly.");
+  if (Date.now() < retryAt)
+    throw Object.assign(new Error("Server is busy. Retrying shortly."), {
+      code: "RELAY_THROTTLED",
+      retryable: true,
+    });
   const token = await installationToken();
   const headers = new Headers(init?.headers);
   if (token) headers.set("X-Installation-Token", token);

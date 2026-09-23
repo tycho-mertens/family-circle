@@ -8,13 +8,13 @@ interface Props {
   id: string;
   nickname?: string;
   isYou?: boolean;
-  isCreator?: boolean;
+  isAdmin?: boolean;
   trailing?: ReactNode;
   showId?: boolean;
 }
 
 /** Member avatar, display name, role badges, and an optional trailing action. */
-export function MemberRow({ id, nickname, isYou, isCreator, trailing, showId = false }: Props) {
+export function MemberRow({ id, nickname, isYou, isAdmin, trailing, showId = false }: Props) {
   const { profilePhotos } = useIdentity();
   const { colors, spacing, type } = useTheme();
   return (
@@ -32,9 +32,9 @@ export function MemberRow({ id, nickname, isYou, isCreator, trailing, showId = f
           {nickname ?? "Unnamed device"}
           {isYou ? " (you)" : ""}
         </Text>
-        {(showId || isCreator) && (
+        {(showId || isAdmin) && (
           <Text style={[type.tiny, { color: colors.textSecondary }]} numberOfLines={1}>
-            {isCreator ? "Admin" : ""}
+            {isAdmin ? "Admin" : ""}
             {showId ? ` ${id}` : ""}
           </Text>
         )}

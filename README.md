@@ -12,9 +12,9 @@ Much of the work in this project is about what happens between those everyday ac
 
 ## Why I made this
 
-I made Family Circle because I don't trust WhatsApp and other messaging and location sharing apps with this much of my personal life. Location data in particular feels too personal to hand over to a service I have little control over.
+I started Family Circle to build a location-sharing app for my own use, with self-hosting and clear control over how location data is shared. I wanted to choose who could see my location and for how long, while running the service on infrastructure I manage.
 
-The main reason I'm building it is to use it myself for location sharing. I wanted something I could run on my own server, with code I could inspect and change, and control over who I share my location with and for how long. Having chat in the same app is useful too, but location sharing is what made me want to build it in the first place.
+I also wanted code I could read and change as my needs change. Chat makes it easier to keep everyday conversations in the same app as location sharing.
 
 ## Demo
 
@@ -37,7 +37,7 @@ These recordings use two Android emulators. All identities and recovery phrases 
 - Recover an identity and its saved group state with a 12-word phrase. Chat history stays on the original phone.
 - Set a nickname and profile photo, choose a light or dark theme, and configure notifications and quiet hours per circle.
 
-QR invitation screens are also included, but the current Android permission configuration needs a fix before scanning works on a fresh install. Use the invite code for now.
+Invitations can be shared as a code or QR code. Scanning asks for camera permission; entering a code works without it.
 
 ## How it works
 
@@ -72,8 +72,10 @@ flowchart LR
 | App runtime | Circle membership, outgoing messages, delivery receipts, and synchronization | [circles.ts](mobile/src/runtime/circles.ts) |
 | Android bridge | Native services, permissions, notifications, and durable local storage | [family-circle-bridge](mobile/modules/family-circle-bridge/android/src/main/java/expo/modules/familycirclebridge) |
 | Rust core | Group encryption, membership authority, invitation encryption, and recovery | [lib.rs](crypto-core/src/lib.rs) |
-| Relay | Mailbox ordering, duplicate handling, backup access, and request limits | [Program.cs](relay/Program.cs) |
+| Relay | Mailbox ordering, duplicate handling, backup access, and request limits | [Program.cs](relay/Program.cs) and [Endpoints](relay/Endpoints) |
 | Map gateway | Local fonts, sprites, and styles, with local or hosted tiles | [serve.py](infra/maps/serve.py) |
+
+The mobile code is split into screen features, runtime operations, and persistence modules. React providers subscribe to the runtime, while Android services can keep it working without an open screen. The [mobile guide](mobile/README.md) explains where to find things and how to test changes. On the relay, routes, request limits, database setup, and background cleanup live in separate modules.
 
 An invitation expires after ten minutes and can be used once. The joining phone supplies its public key package; the administrator's phone processes the request and sends back the encrypted group state. A device that was explicitly removed needs administrator approval to return. The administrator must be online for admission to finish.
 
@@ -85,13 +87,13 @@ Encrypting a message advances local protocol state. Sending it before saving tha
 
 The app commits its encrypted state and outgoing queue together before uploading anything. A retry uses the same saved envelope and event ID. If a local transaction fails, the app restores its previous in-memory state.
 
-The [state journal](mobile/src/state-journal.ts) coordinates transactions, and [ChatRuntime](mobile/modules/family-circle-bridge/android/src/main/java/expo/modules/familycirclebridge/ChatRuntime.kt) writes the native checkpoint atomically.
+The [chat persistence module](mobile/src/persistence/chat.ts) owns the transaction journal, checkpoints, and outgoing queue, and [ChatRuntime](mobile/modules/family-circle-bridge/android/src/main/java/expo/modules/familycirclebridge/ChatRuntime.kt) writes the native checkpoint atomically.
 
 ### Use notifications to trigger a catch-up
 
 A SignalR notification means there may be new work in a mailbox. The phone then fetches messages using its saved position in that mailbox. It can recover from a missed notification by catching up later.
 
-The [relay](relay/Services/SyncHub.cs) combines repeated change notifications. The [client coordinator](mobile/src/sync-coordinator.ts) combines overlapping requests into another synchronization pass.
+The [relay notification service](relay/Services/SyncNotifications.cs) combines repeated change notifications. The [client coordinator](mobile/src/sync-coordinator.ts) combines overlapping requests into another synchronization pass.
 
 ### Confirm membership changes in message order
 
@@ -182,15 +184,22 @@ If an HTTP service address changes, run `npx expo prebuild --platform android --
 
 ## Tests
 
-The last build check passed for the Rust host library, both Android native libraries, the Android Release APK, and the relay Release build. It also passed 34 Rust tests, 47 relay tests, 12 Android unit tests, 11 map gateway tests, and TypeScript checking. One Rust test that needs a live relay was skipped. These checks ran locally. They do not replace testing the app on a device.
-
 From the repository root, after installing the dependencies:
 
 ```bash
-cargo test --workspace
-dotnet test relay/tests/FamilyCircle.Relay.Tests.csproj
-python3 -m unittest discover -s infra/maps -p 'test_*.py'
+./scripts/run-all-tests.sh
+```
 
+This runs the Rust, relay, mobile, map gateway, Android bridge, and emulator-runner tests, plus TypeScript checking. It builds the Rust Android libraries for the bridge tests and starts an isolated relay for the HTTP scaling test with 10, 20, and 50 members. Use `--skip-android` if the Android toolchain is unavailable, or `--skip-scaling` to leave out the longer scaling run. The script prints a result for each suite and exits with a failure status if any suite fails.
+
+For individual suites:
+
+```bash
+cargo test --workspace
+dotnet test relay/tests/FamilyCircle.Relay.Tests.csproj -p:IsTestProject=true
+python3 -m unittest discover -s infra/maps -p 'test_*.py'
+python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+npm --prefix mobile test
 npm --prefix mobile run typecheck
 ```
 
@@ -203,14 +212,24 @@ cd android
 ./gradlew :family-circle-bridge:testDebugUnitTest
 ```
 
-The [HTTP scaling test](crypto-core/tests/relay_scaling.rs) is opt-in and needs an isolated relay; its source includes the invocation. There is currently no CI workflow or separate TypeScript behavior test suite.
+The mobile tests cover persistence and rollback, retries, background synchronization, membership transitions, payload validation, and chat and map interactions. They replace native and network boundaries, so device checks still matter.
+
+For the full two-emulator walkthrough, prepare the map assets, native libraries, generated Android project, and two AVDs, then run:
+
+```bash
+bash scripts/run-emulator-smoke.sh --rebuild
+```
+
+This builds and installs the app, starts isolated development services, and checks onboarding, invitations, chat actions, location sharing, map gestures, and offline restart. It uses temporary Android users to preserve existing app identities, then cleans up those users and its services. Logs and failure screenshots stay in the run directory under `/tmp`. See the [mobile guide](mobile/README.md#emulator-checks) for prerequisites and smaller checks.
+
+There is currently no CI workflow. These scripts run locally; passing them does not establish real-device battery performance or production capacity.
 
 ## Current limitations
 
+The app now separates screen features, runtime state, persistence, and relay endpoints. There is still cleanup to do, especially around the interactions between background work, recovery, and membership changes.
+
 - **Android only.** iOS and web do not have the native bridge needed to run the app.
-- **QR scanning needs a permission fix.** The image-picker configuration currently blocks camera access. Invite codes work without the camera.
 - **Circle renaming needs a receiver-side permission check.** The UI restricts it to admins, but a modified member client can send a rename that other members accept.
-- **Media validation is incomplete.** Attachments have size and format checks, but received images do not have a decoded-dimension limit. A small, malformed image can still exhaust decoder resources.
 - **Recovery is limited to saved identity and group state.** Chat history is not restored. Backup uploads can lag behind local changes, and an old group state may need a rejoin.
 - **Background delivery depends on Android.** Permissions, battery restrictions, force stops, and connectivity can delay messages and location updates.
 - **Encryption does not hide all metadata.** The relay sees routing identifiers, timing, sizes, and connections. Map requests reveal the areas being viewed to the gateway and, when used, its tile provider.

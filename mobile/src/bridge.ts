@@ -131,7 +131,7 @@ export async function removeMember(
   return NativeBridge.removeMember(deviceSlot, circleId, memberId);
 }
 
-/** Current member device_ids of `circleId`, per this device's local view. */
+/** Member device IDs for `circleId` in this device's local group state. */
 export async function listMembers(deviceSlot: string, circleId: string): Promise<string[]> {
   return NativeBridge.listMembers(deviceSlot, circleId);
 }
@@ -153,7 +153,7 @@ export async function proposeLeave(deviceSlot: string, circleId: string): Promis
   return NativeBridge.proposeLeave(deviceSlot, circleId);
 }
 
-/** Receive and locally queue a Proposal (e.g. from `proposeLeave`) — does not commit it. */
+/** Queue a proposal locally (e.g. from `proposeLeave`) without committing it. */
 export async function processProposal(
   deviceSlot: string,
   circleId: string,
@@ -162,7 +162,7 @@ export async function processProposal(
   return NativeBridge.processProposal(deviceSlot, circleId, proposal);
 }
 
-/** Commit whatever proposals are currently queued (via `processProposal`) for `circleId`. */
+/** Commit the proposals queued by `processProposal` for `circleId`. */
 export async function commitPendingProposals(
   deviceSlot: string,
   circleId: string,
@@ -220,8 +220,8 @@ export async function decryptEvent(
   circleId: string,
   envelope: EncryptedEnvelope,
 ): Promise<DecryptedEvent> {
-  // Destructured into top-level args, not passed as one object — see the
-  // comment on this native function's declaration in index.ts for why.
+  // Pass byte arrays as top-level arguments: Expo/JSI fails to convert
+  // nested Uint8Arrays on repeated calls. See the binding in index.ts.
   return NativeBridge.decryptEvent(
     deviceSlot,
     circleId,

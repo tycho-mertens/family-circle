@@ -69,16 +69,30 @@ public class SqliteMailboxRepository(RelayDbContext db) : IMailboxRepository
                 var latest = membershipOnly
                     ? await db.Database.SqlQueryRaw<long>("SELECT SequenceId AS Value FROM MembershipHeads WHERE MailboxId = {0}", envelope.MailboxId).SingleOrDefaultAsync(ct)
                     : await db.Envelopes.Where(e => e.MailboxId == envelope.MailboxId).MaxAsync(e => (long?)e.SequenceId, ct) ?? 0;
-                if (latest > expectedSequenceId) throw new MailboxChangedException();
+                if (latest > expectedSequenceId)
+                {
+                    throw new MailboxChangedException();
+                }
             }
+
             db.Envelopes.Add(envelope);
             await db.SaveChangesAsync(ct);
             if (envelope.Kind == "commit")
-                await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO MembershipHeads(MailboxId, SequenceId) VALUES({envelope.MailboxId}, {envelope.SequenceId}) ON CONFLICT(MailboxId) DO UPDATE SET SequenceId=excluded.SequenceId", ct);
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync($"""
+                    INSERT INTO MembershipHeads(MailboxId, SequenceId)
+                    VALUES({envelope.MailboxId}, {envelope.SequenceId})
+                    ON CONFLICT(MailboxId) DO UPDATE SET SequenceId=excluded.SequenceId
+                    """, ct);
+            }
+
             await transaction.CommitAsync(ct);
             return true;
         }
-        finally { AppendLock.Release(); }
+        finally
+        {
+            AppendLock.Release();
+        }
     }
 
     public async Task<IReadOnlyList<Envelope>> GetEventsAfterAsync(

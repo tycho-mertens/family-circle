@@ -69,7 +69,15 @@ function fromWireEnvelope(wire: EnvelopeWire): MailboxEnvelope {
 async function checkOk(response: Response, action: string): Promise<Response> {
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(`relay ${action} failed: ${response.status} ${body}`.trim());
+    throw Object.assign(
+      new Error(`relay ${action} failed: ${response.status} ${body}`.trim()),
+      {
+        code: "RELAY_HTTP",
+        status: response.status,
+        retryable:
+          response.status === 408 || response.status === 429 || response.status >= 500,
+      },
+    );
   }
   return response;
 }
@@ -325,7 +333,9 @@ export async function fetchBackup(
   proof: Uint8Array,
 ): Promise<BackupFetchResult> {
   const params = new URLSearchParams({ nonce, proof: bytesToBase64(proof) });
-  const response = await relayFetch(`${baseUrl()}/v1/backups/${backupId}?${params.toString()}`);
+  const response = await relayFetch(
+    `${baseUrl()}/v1/backups/${backupId}?${params.toString()}`,
+  );
   if (response.status === 401) return { status: "unauthorized" };
   if (response.status === 404) return { status: "not-found" };
   await checkOk(response, "fetch backup");
@@ -338,4 +348,5 @@ export class MailboxChangedError extends Error {
     super("Mailbox changed before upload");
   }
 }
-export const isMailboxChanged = (error: unknown): boolean => error instanceof MailboxChangedError;
+export const isMailboxChanged = (error: unknown): boolean =>
+  error instanceof MailboxChangedError;
